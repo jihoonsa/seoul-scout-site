@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Seoul Scout</title>
+  <meta name="description" content="서울 창업 동네 찾기: 업종별 살펴볼 동네, 유동인구, 문 닫는 가게, 임대료를 지도에서 쉽게.">
+  <link rel="icon" href="mark.svg" type="image/svg+xml">
+  <link rel="preload" href="vendor/pretendard/Pretendard-Regular.subset.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- the panel's numbers come from this file: start it while the map library loads -->
+  <link rel="preload" href="data/dongs.json" as="fetch" crossorigin>
+  <link rel="stylesheet" href="vendor/maplibre-gl-5.24.0/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <div id="map" class="map" aria-label="서울 지도"></div>
+    <div id="tooltip" class="tooltip" hidden></div>
+    <div id="store-card" class="store-card" role="dialog" hidden></div>
+
+    <!-- Left column (desktop): everything that floats over the map stacks here, so a wide panel never covers it.
+         On phones the column is display: contents and each item keeps its own place. -->
+    <div class="left-column">
+      <!-- Top left: brand, search, the trade question -->
+      <section id="top-card" class="card top-card">
+        <header class="brand-row">
+          <div class="brand-mark">
+            <img class="mark" src="mark.svg" alt="" width="38" height="38">
+            <div>
+              <p class="brand">서울 스카웃</p>
+              <p class="tagline" id="tagline">내 업종 가게가 모자란 동네 찾기</p>
+            </div>
+          </div>
+          <div class="top-buttons">
+            <button type="button" class="pill-button" id="language">EN</button>
+            <button type="button" class="pill-button help-button" id="help">?</button>
+          </div>
+        </header>
+        <div class="search-box">
+          <span class="search-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="7.5" cy="7.5" r="5.25"/><path d="M11.5 11.5l4.5 4.5"/></svg></span>
+          <input id="search" type="search" autocomplete="off" aria-label="search">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+        <div id="trade-step" class="trade-step"></div>
+      </section>
+      <button type="button" id="compare-open" class="compare-open" hidden></button>
+      <!-- Store dot filters, or a hint to zoom in -->
+      <div id="zoom-hint" class="hint-pill"></div>
+      <div id="dots-loading" class="hint-pill loading" hidden></div>
+      <div id="dot-filters" class="card dot-filters" hidden></div>
+      <!-- Bottom left: map view (layers, time slider, legend) -->
+      <div id="layer-control" class="card layer-control"></div>
+    </div>
+
+    <!-- Right (bottom on phones): the answer. On desktop it can be resized with the handle and folded (panel.js). -->
+    <div id="panel" class="panel">
+      <div id="panel-handle" class="panel-handle" role="separator" aria-orientation="vertical"
+           aria-valuemin="25" aria-valuemax="70" tabindex="0"></div>
+      <button type="button" id="panel-fold" class="panel-fold" aria-expanded="true"></button>
+      <aside id="sheet" class="card sheet" aria-live="polite">
+        <button type="button" class="sheet-handle" id="sheet-toggle" aria-label="expand"><span></span></button>
+        <div id="sheet-body"></div>
+        <p class="sources" id="sources"></p>
+      </aside>
+    </div>
+
+    <!-- Right edge: zoom -->
+    <div class="zoom-controls card">
+      <button type="button" id="zoom-in">+</button>
+      <button type="button" id="zoom-out">−</button>
+      <button type="button" id="seoul-all" class="seoul-all"></button>
+    </div>
+
+    <dialog id="compare-dialog" class="compare-dialog">
+      <button type="button" class="icon-button dialog-close" id="compare-close" aria-label="close">×</button>
+      <div class="dialog-body"></div>
+    </dialog>
+
+    <!-- The first-visit notice and the ? help: one dialog, filled by openHelp() in app.js -->
+    <dialog id="help-dialog" class="compare-dialog help-dialog">
+      <button type="button" class="icon-button dialog-close" id="help-close" aria-label="close">×</button>
+      <div id="help-body"></div>
+    </dialog>
+
+    <!-- The tour: a dimmed screen with holes around what each step points at, and a card; built by tour.js -->
+    <dialog id="tour" class="tour" aria-labelledby="tour-title" aria-describedby="tour-body"></dialog>
+
+    <p id="error" class="error" hidden></p>
+  </div>
+
+  <!-- MapLibre draws the map; pmtiles reads the Seoul base map file in small parts.
+       Kept in vendor/ so the map does not depend on a CDN (D62). -->
+  <script src="vendor/maplibre-gl-5.24.0/maplibre-gl.js"></script>
+  <script src="vendor/pmtiles-4.5.0/pmtiles.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
