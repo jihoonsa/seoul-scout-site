@@ -3,21 +3,24 @@
 // - From zoom 14, the chosen trade's shops show as red markers with their names, and the extra kinds picked under
 //   "같이 볼 가게" as white markers (shop-markers.js). One marker per building per kind: "name +2" when it has more.
 //   A building's markers stack downwards from its point, the chosen trade's on the point itself.
-// - From zoom 15, the other shops are gray dots, one per building: its size grows with the stores inside, and tapping
-//   it lists every store by floor. With a marked kind on the map, the dots fade so the markers stand out.
+// - From zoom 15, the other shops show as icons, one per building, in the colour of the building's most common shop
+//   type (shop-markers.js GROUP_COLORS); from zoom 17 with a name ("스타벅스 +4"). Tapping one lists every store by
+//   floor. With a marked kind on the map, the icons fade so the markers stand out. (D80: three stages, as a founder
+//   asked: far out nothing, closer icons, closest icons and names. They were gray dots without a type.)
 // Only the 구 files of the area on screen are loaded, and below zoom 15 only when some kind is marked.
 
 import { COLORS } from "./colors.js";
 import { metersBetween } from "./simulation.js";
 import { kindIconKey, markerImageId } from "./shop-markers.js";
 
-export const LABELS_MIN_ZOOM = 14;               // shop markers and names from the neighbourhood level
-export const DOTS_MIN_ZOOM = 15;                 // gray dots only at street level
+export const LABELS_MIN_ZOOM = 14;               // the chosen trade's (and extra kinds') markers from the neighbourhood level
+export const DOTS_MIN_ZOOM = 15;                 // every other shop's type icon from here
+export const MAIN_NAMES_ZOOM = 16;               // the chosen trade's shop names from here
+export const NAMES_MIN_ZOOM = 17;                // every other shop's name from here
 const SOURCE = "stores";
 const LABEL_SOURCE = "shop-labels";
 const SELECTED_SOURCE = "store-selected";
 const EMPTY = { type: "FeatureCollection", features: [] };
-const LARGEST_SIZE_STEP = 8;                     // dot size stops growing at 8² = 64 stores
 const LABEL_TEXT_PX = 12;
 const MARKER_STEP_PX = 34;                       // a building's markers stack this far apart: a 24 px marker clears a two-line name
 // A marker and its name move down by the feature's "shift" (px); icon-offset is in px, text-offset in ems of the text
@@ -42,30 +45,33 @@ export class StoreDots {
   }
 
   addLayers(beforeId) {
-    const sizeStep = ["min", ["sqrt", ["get", "count"]], LARGEST_SIZE_STEP];
     this.map.addSource(SOURCE, { type: "geojson", data: EMPTY });
     this.map.addSource(LABEL_SOURCE, { type: "geojson", data: EMPTY });
     this.map.addSource(SELECTED_SOURCE, { type: "geojson", data: EMPTY });
+    // Every other shop: its type's icon from zoom 15, its name too from 17. Icons that would overlap wait for a closer
+    // zoom (the busiest buildings are placed first), as on any street map.
+    // Two layers: the icons are placed first, the names then fill the room left, so a name never hides an icon
     this.map.addLayer({
-      id: "store-dots", type: "circle", source: SOURCE, minzoom: DOTS_MIN_ZOOM,
-      layout: { "circle-sort-key": ["get", "rank"] },
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"],
-          15, ["+", ["case", ["get", "dim"], 1.6, 2.4], ["*", 0.5, sizeStep]],
-          18, ["+", ["case", ["get", "dim"], 3, 5], ["*", 1.5, sizeStep]]],
-        "circle-color": ["get", "color"],
-        "circle-opacity": ["case", ["get", "dim"], 0.6, 0.95],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 15, 0.8, 18, 1.6],
+      id: "store-icons", type: "symbol", source: SOURCE, minzoom: DOTS_MIN_ZOOM,
+      layout: {
+        "icon-image": ["get", "icon"],
+        "icon-size": ["interpolate", ["linear"], ["zoom"], DOTS_MIN_ZOOM, 0.62, NAMES_MIN_ZOOM, 0.85, 19, 1],
+        "icon-padding": 1,
+        "symbol-sort-key": ["get", "rank"],
       },
+      paint: { "icon-opacity": ["case", ["get", "dim"], 0.4, 1] },
     }, beforeId);
     this.map.addLayer({
-      id: "store-counts", type: "symbol", source: SOURCE, minzoom: 16.5,
-      filter: ["all", [">", ["get", "count"], 1], ["!", ["get", "dim"]]],
-      layout: { "text-field": ["to-string", ["get", "count"]], "text-font": ["Noto Sans Medium"], "text-size": 10,
-                "text-allow-overlap": true, "text-ignore-placement": true },
-      paint: { "text-color": "#ffffff" },
-    }, beforeId);
+      id: "store-names", type: "symbol", source: SOURCE, minzoom: NAMES_MIN_ZOOM,
+      filter: ["!", ["get", "dim"]],
+      layout: {
+        "text-field": ["get", "label"], "text-font": ["Noto Sans Regular"], "text-size": 11,
+        // right of the icon if there is room, else left, above or below; clear of the icon's own box
+        "text-variable-anchor": ["left", "right", "top", "bottom"], "text-radial-offset": 1.4, "text-padding": 0,
+        "text-max-width": 8, "symbol-sort-key": ["get", "rank"],
+      },
+      paint: { "text-color": "#3d4044", "text-halo-color": "#ffffff", "text-halo-width": 1.4 },
+    }, "store-icons");   // under the icons: the map places the upper layer's symbols first
     this.map.addLayer({
       id: "store-selected", type: "circle", source: SELECTED_SOURCE, minzoom: LABELS_MIN_ZOOM,
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 15, ["case", ["get", "marker"], 15, 7], 18, 16],
@@ -76,7 +82,7 @@ export class StoreDots {
       id: "shop-labels", type: "symbol", source: LABEL_SOURCE, minzoom: LABELS_MIN_ZOOM,
       layout: {
         "icon-image": ["get", "icon"], "icon-offset": ICON_SHIFT,
-        "text-field": ["get", "label"], "text-font": ["Noto Sans Medium"], "text-size": LABEL_TEXT_PX,
+        "text-field": ["step", ["zoom"], "", MAIN_NAMES_ZOOM, ["get", "label"]], "text-font": ["Noto Sans Medium"], "text-size": LABEL_TEXT_PX,
         "text-anchor": "left", "text-offset": TEXT_SHIFT, "text-max-width": 8,
         "text-optional": true,                   // in a crowded street the marker stays and the name gives way
         "symbol-sort-key": ["get", "order"],
@@ -118,7 +124,7 @@ export class StoreDots {
   // dozens of names piled onto "내 카페" (round 3), and its markers and their dots already count the rivals.
   setNamesFromZoom(zoom) {
     const label = ["get", "label"];
-    this.map.setLayoutProperty("shop-labels", "text-field", zoom === null ? label : ["step", ["zoom"], "", zoom, label]);
+    this.map.setLayoutProperty("shop-labels", "text-field", ["step", ["zoom"], "", zoom ?? MAIN_NAMES_ZOOM, label]);
   }
 
   setVisibleGroups(groups) {
@@ -202,8 +208,13 @@ export class StoreDots {
         }
         const others = building.rows.filter((row) => !this.isMarked(sub[row]) && this.visibleGroups.has(group[row]));
         if (others.length) {
+          // the building shows as its most common type; its name is that type's first shop, "+N" for the rest
+          const top = mostCommon(others.map((row) => group[row]));
+          const first = others.find((row) => group[row] === top);
           dots.push({ type: "Feature", id, geometry, properties: {
-            building: id, count: others.length, color: faded ? COLORS.storeMuted : COLORS.store, dim: faded, rank: others.length } });
+            building: id, count: others.length, dim: faded, rank: -others.length,
+            icon: markerImageId("group", this.meta.groups[top].key),
+            label: shopLabel([name[first], ...others.filter((row) => row !== first).map((row) => name[row])]) } });
         }
         if (markers || others.length) this.drawn.push({ code, index });
       });

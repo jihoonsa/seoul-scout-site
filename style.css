@@ -964,3 +964,58 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .similar-list li { display: flex; align-items: center; gap: 8px; }
 .similar-list .shop-key { width: 22px; height: 22px; flex: none; }
 .similar-count { margin-left: auto; white-space: nowrap; }
+
+/* ---------------------------------------------------------------------------------------------------------------
+   D80: simpler, number-first screens (founder feedback, 2026-11-21)
+   --------------------------------------------------------------------------------------------------------------- */
+
+/* The ? button carries a word: "? 사용법" */
+.help-button { min-width: 32px; padding: 5px 8px; white-space: nowrap; }   /* narrow enough that the tagline stays on one line */
+
+/* Key numbers: one tile per figure, the number big, what it is compared with under it, then a word chip */
+.key-numbers { margin: 18px 0 8px; }
+.kn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.kn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0;
+  padding: 12px 12px 14px; border: 1px solid var(--separator); border-radius: var(--radius); background: var(--paper);
+}
+.kn-label { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--secondary); line-height: 1.35; }
+.kn-value { margin: 0; font-size: 24px; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--text); }
+.kn-compare { margin: 0; font-size: var(--text-xs); color: var(--secondary); line-height: 1.4; }
+.kn .status { margin-top: 4px; }
+.status-brand { background: var(--brand-soft); color: var(--brand-text); }
+.more .kn-grid { margin-top: 12px; }
+
+/* The sentence above the key numbers */
+.verdict { margin: 16px 0 0; padding: 14px 16px; border-left: 4px solid var(--brand); background: var(--ground); }
+.verdict-headline { margin: 0 0 8px; font-size: var(--text-lg); font-weight: 800; line-height: 1.35; letter-spacing: -0.02em; }
+.verdict-headline:last-child { margin-bottom: 0; }
+.verdict .box-tag { margin: 0 0 6px; }
+
+/* "자세히 보기": sentences, then the table of every figure */
+.more-body { margin-top: 12px; }
+.more-body .sentence { font-size: var(--text-sm); }
+
+/* The start view and the welcome: three steps, each with the piece of screen it is about */
+.start-steps { margin: 16px 0; }
+.start-steps .step-number {
+  display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--ink); color: #fff; font-weight: 800; font-size: var(--text-sm);
+}
+.step-sample { display: inline-flex; margin-top: 8px; pointer-events: none; }
+.trade-chip.step-sample { align-items: center; padding: 6px 10px; }
+.kn.step-sample { display: inline-flex; padding: 8px 12px; }
+.kn.step-sample .kn-value { font-size: 20px; }
+.start-links { display: grid; gap: 8px; }
+.start-links .secondary-button { width: 100%; text-align: left; }
+.start-more { margin-top: 18px; }
+
+/* The trade list: the shortfall in words under the counts */
+.place-verdict { font-size: var(--text-sm); font-weight: 700; color: var(--brand-text); }
+
+/* Shop type chips: the type's map icon in its colour */
+.group-chip { display: inline-flex; align-items: center; gap: 5px; padding-left: 4px; }
+.group-chip .shop-key { width: 18px; height: 18px; }
+.group-chip:not(.on) .shop-key { filter: grayscale(1); opacity: 0.45; }
+.legend-icons { display: inline-flex; flex: none; }
+.legend-icons .shop-key { width: 16px; height: 16px; margin-right: -3px; }

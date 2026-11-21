@@ -41,20 +41,21 @@ export const STATUS = {
 // Gap map ("유난히 적음", D66): the five washes of DESIGN.md, far fewer to far more. −2 is our gap definition (D13).
 // The legend and the meters show the wash itself. The map draws it see-through, so streets and parks show under it:
 // its colour is darkened so that, over white land at the city view, it lands exactly on the wash (round 3: off-token).
+// D80: the five classes were washes so pale that neighbouring areas looked the same. They are now clearly apart:
+// a strong and a light vermilion for fewer shops, nothing for similar, a light and a dark slate for more.
 export const GAP_STYLE = [
-  { upTo: -2, ...seeThrough("#f4b9a3", 0.6) },
-  { upTo: -1, ...seeThrough("#fadccf", 0.45) },
+  { upTo: -2, ...seeThrough("#ee7a55", 0.75) },
+  { upTo: -1, ...seeThrough("#f9c3ab", 0.55) },
   { upTo: 1, wash: "#ffffff", opacity: 0, color: "#000000" },
-  { upTo: 2, ...seeThrough("#e6e7e3", 0.45) },
-  { upTo: Infinity, ...seeThrough("#d5d7d2", 0.6) },
+  { upTo: 2, ...seeThrough("#d3d8de", 0.5) },
+  { upTo: Infinity, ...seeThrough("#9ea6b0", 0.7) },
 ];
 
-// Opening view (and wishlist matches): the same vermilion washes, by how many trades an area is worth a look for.
-// Round 4: these were brand-colour opacities that matched no token; 2+ trades get a third, deeper wash.
+// "All trades" view (and wishlist matches): vermilion, deeper the more trades an area is worth a look for (D80: stronger)
 export const SUGGESTED_STYLE = {
-  gapOnly: seeThrough("#fadccf", 0.45),
-  one: seeThrough("#f4b9a3", 0.6),
-  several: seeThrough("#e8846a", 0.7),
+  gapOnly: seeThrough("#fbd5c4", 0.5),
+  one: seeThrough("#f29a78", 0.7),
+  several: seeThrough("#d9532f", 0.85),
 };
 
 // A wash drawn see-through: its colour is the one that, at this opacity over white, shows as the wash

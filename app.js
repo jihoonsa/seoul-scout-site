@@ -17,9 +17,9 @@ import { CRITERIA, findMatches, wishlistReferences } from "./wishlist.js";
 import { initPanel, renderPanelLabels, showPanel } from "./panel.js";
 import { tradeIcon } from "./icons.js";
 import { closeTour, showTourStep } from "./tour.js";
-import { addMarkerImages, kindIconKey, markerSvg } from "./shop-markers.js";
+import { GROUP_COLORS, addMarkerImages, kindIconKey, markerSvg } from "./shop-markers.js";
 import { MAX_EXTRA_KINDS, kindsFromLink, searchKinds } from "./kind-picker.js";
-import { iconRow, shopsPerIcon, signalLevel } from "./evidence.js";
+import { signalLevel } from "./evidence.js";
 import {
   CUSTOMER_GROUPS, NARROW_KEYS, TIME_BANDS, busiestTime, cleanChoice, curveDays, customerCount, customerCurve, meetsNarrow,
   narrowReferences,
@@ -38,7 +38,7 @@ const CLOSEST_FIT_ZOOM = 15.5;    // when fitting a small neighborhood, do not z
 const TOUR_STEPS = 5;
 const TOUR_TRADE = "제과점";
 const TOUR_DONG = "11200790";        // 성동구 용답동
-const TOUR_STREET_ZOOM = 15;         // close enough for shop names (LABELS_MIN_ZOOM is 14)
+const TOUR_STREET_ZOOM = 16;         // close enough for the chosen trade's shop names (store-dots.js MAIN_NAMES_ZOOM)
 const TOUR_MAP_BOX = [240, 160];   // px: the part of the map step 5 points at, around 용답동's bakeries
 const TOUR_SHOPS_CENTER = [127.0530, 37.5627];   // [lng, lat]: between 용답동's bakeries 블레플러스 and 조잇 (none lies within 350 m of its centre)
 const STREET_ZOOM = 16;           // "이 동네 가게 보기"
@@ -71,11 +71,12 @@ const LAYERS_ICON = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none"
 
 // Map views: what the neighborhoods are tinted by. Tints sit under the roads and labels, so the map stays readable.
 // Colors follow colors.js: orange = gaps and suggestions, blue = people, green = sales, red = risk, violet = cost.
+// D80: "none" comes first and is the opening view, so nothing is chosen or coloured until the founder asks for it.
 const LAYERS = {
+  none: { label: () => t("layerNone") },
   suggested: { label: () => t("layerSuggested"), withoutTrade: true },
   tradeGap: { label: () => t("layerTradeGap", tradeName(state.trade)), needsTrade: true, diverging: true,
               value: (dong) => dong.trades[state.trade]?.resid ?? null },
-  none: { label: () => t("layerNone") },
   crowd: { label: () => t("layerCrowd"), color: COLORS.people, value: (dong) => dong.hourly[state.dayType][state.hour], timed: true },
   tradeSales: { label: () => t("layerTradeSales", tradeName(state.trade)), color: COLORS.good, needsTrade: true,
                 value: (dong) => dong.trades[state.trade]?.sales_per_shop ?? null },
@@ -85,7 +86,7 @@ const LAYERS = {
           value: (dong) => (dong.info.rent_area_km > RENT_FAR_KM ? null : dong.kpi.rent_small_shop) },
   customers: { label: () => t("layerCustomers"), color: COLORS.people, customersOnly: true, value: customerValue },
 };
-const OPACITY_STEPS = [0.08, 0.18, 0.3, 0.42, 0.55];            // 5 quantile classes, light to strong
+const OPACITY_STEPS = [0.1, 0.25, 0.4, 0.55, 0.72];             // 5 quantile classes, light to strong (D80: wider apart)
 
 const state = {
   map: null, data: null, meta: null, dots: null,
@@ -97,7 +98,7 @@ const state = {
   extraKinds: [],               // "같이 볼 가게": extra SEMAS kinds shown on the map, in the order picked
   addresses: null,              // promise of the address search index, loaded on first use
   trade: "", selected: null, hovered: null, compared: [],
-  layer: "suggested", dayType: "weekday", hour: 13, playing: null, breaks: null,
+  layer: "none", dayType: "weekday", hour: 13, playing: null, breaks: null,   // D80: a plain map until something is chosen
   browsing: false,             // "그냥 둘러볼게요": trade question folded away
   overview: null,              // gaps and suggestions for all trades (summarizeSuggestions)
   medians: {},                 // trade -> Seoul medians { sales, close }
@@ -335,16 +336,17 @@ function drawNeighborhoods() {
   const tint = ["coalesce", ["feature-state", "opacity"], 0];
   map.addLayer({ id: "dong-fill", type: "fill", source: "dongs",
     paint: { "fill-color": ["coalesce", ["feature-state", "color"], "#000000"],
-             "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12, tint, 14, ["*", 0.5, tint], 16, ["*", 0.28, tint]] } },
+             // D80: thins less than before (was half by 14), so the colours still tell areas apart close in
+             "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12, tint, 14, ["*", 0.75, tint], 16, ["*", 0.3, tint]] } },
   TINT_BEFORE);
   map.addLayer({ id: "dong-line", type: "line", source: "dongs",
-    paint: { "line-color": ["case", highlighted, COLORS.brand, COLORS.ink], "line-opacity": ["case", highlighted, 0.9, 0.16],
+    paint: { "line-color": ["case", highlighted, COLORS.brand, COLORS.ink], "line-opacity": ["case", highlighted, 0.9, 0.3],
              "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", highlighted, 1.4, 0.5], 14, ["case", highlighted, 2.2, 1]] } },
   OUTLINE_BEFORE);
   // The 25 구 borders (scripts/build_gu_borders.py), a darker ink line between the faint neighborhood lines
   map.addSource("gu-borders", { type: "geojson", data: state.guBorders });
   map.addLayer({ id: "gu-borders", type: "line", source: "gu-borders",
-    paint: { "line-color": COLORS.ink, "line-opacity": 0.45, "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 14, 1.6] } },
+    paint: { "line-color": COLORS.ink, "line-opacity": 0.6, "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 14, 1.8] } },
   OUTLINE_BEFORE);
   map.addLayer({ id: "dong-hover", type: "line", source: "dongs", filter: ["==", ["id"], -1],
     paint: { "line-color": COLORS.ink, "line-opacity": 0.6, "line-width": 2 } }, OUTLINE_BEFORE);
@@ -509,12 +511,10 @@ function drawPins() {
     const button = document.createElement("button");
     button.className = `pin${strong ? " strong" : ""}`;
     button.type = "button";
-    // with a trade chosen, the pin also says how many shops are missing against similar areas: the idea, on the map
-    const candidate = state.trade ? candidateOf(dong) : null;
-    const missing = candidate ? Math.round(candidate.expected - candidate.actual) : 0;
-    const missingTag = missing > 0 ? `<span class="pin-missing">${t("pinMissing", missing)}</span>` : "";
+    // D80: the pin carries only its number and name; "−25곳" on the map was hard to read, so the shop counts
+    // live in the list and the report, said in words ("12곳 · 비슷한 동네는 보통 37곳")
     button.innerHTML = `<span class="pin-dot" aria-hidden="true"></span><span class="pin-rank">${pinRank(index + 1)}</span>`
-      + `<span class="pin-name">${escapeHtml(placeName(dong))}${strong ? '<span class="pin-star" aria-hidden="true">★</span>' : ""}${missingTag}</span>`;
+      + `<span class="pin-name">${escapeHtml(placeName(dong))}${strong ? '<span class="pin-star" aria-hidden="true">★</span>' : ""}</span>`;
     button.addEventListener("click", (event) => { event.stopPropagation(); selectDong(dong, { zoom: true }); });
     const holder = document.createElement("div");
     holder.appendChild(button);
@@ -650,7 +650,7 @@ function storeDotAt(point) {
   if (!state.dots.streetLevel) return null;
   const box = [[point.x - HIT_RADIUS, point.y - HIT_RADIUS], [point.x + HIT_RADIUS, point.y + HIT_RADIUS]];
   let best = null, bestDistance = Infinity;
-  for (const feature of state.map.queryRenderedFeatures(box, { layers: ["store-dots", "shop-labels", "shop-outside"] })) {
+  for (const feature of state.map.queryRenderedFeatures(box, { layers: ["store-icons", "shop-labels", "shop-outside"] })) {
     const at = state.map.project(feature.geometry.coordinates);
     const distance = (at.x - point.x) ** 2 + (at.y - point.y) ** 2;
     if (distance < bestDistance) {
@@ -758,8 +758,10 @@ function buildingCardHtml(building) {
     `<span class="kind">${escapeHtml(groupName(state.meta.groups[group]))} ${n}</span>`);
   const floors = [...countBy(stores.map((s) => s.floor)).map(([floor]) => floor)].sort(floorOrder).map((floor) => {
     const here = stores.filter((s) => s.floor === floor).sort((a, b) => (b.competitor - a.competitor) || a.group - b.group);
+    // a plain store's dot has its type's map colour (D80); competitors and extra kinds keep their own marks
+    const dotStyle = (s) => (s.competitor || s.extra ? "" : ` style="background:${GROUP_COLORS[state.meta.groups[s.group].key]}"`);
     const items = here.map((s) => `<li class="${s.competitor ? "competitor" : ""}${s.extra ? " extra" : ""}${s.visible ? "" : " faded"}">
-        <span class="dot"></span><span class="store-line"><b>${escapeHtml(s.name)}</b> <span>${escapeHtml(s.subtype)}</span></span></li>`);
+        <span class="dot"${dotStyle(s)}></span><span class="store-line"><b>${escapeHtml(s.name)}</b> <span>${escapeHtml(s.subtype)}</span></span></li>`);
     return `<li><p class="floor-label">${escapeHtml(floorLabel(floor))}</p><ul class="floor-stores">${items.join("")}</ul></li>`;
   });
   const label = building.name || building.address;
@@ -846,8 +848,9 @@ function renderDotControls() {
   if (active) {
     const chips = state.meta.groups.map((group, index) => {
       const on = state.dots.visibleGroups.has(index);
-      return `<button type="button" class="chip${on ? " on" : ""}" data-group="${index}" aria-pressed="${on}">
-        <span class="check" aria-hidden="true">${on ? "✓" : "+"}</span>${escapeHtml(groupName(group))}</button>`;
+      // each chip shows its type's icon in its map colour, so the chips are also the key to the map (D80)
+      return `<button type="button" class="chip group-chip${on ? " on" : ""}" data-group="${index}" aria-pressed="${on}">
+        ${markerSvg("group", group.key)}${escapeHtml(groupName(group))}</button>`;
     });
     groupChips = `<div class="chip-row">${chips.join("")}</div>`;
   }
@@ -959,7 +962,7 @@ function chooseTrade(trade, render = true) {
   if (state.sim) endSimulation(false);
   state.trade = trade;
   state.browsing = false;
-  state.layer = trade ? "tradeGap" : "suggested";
+  state.layer = trade ? "tradeGap" : "none";      // clearing the trade goes back to the plain map (D80)
   stopPlaying();
   if (state.wishlist && !trade) state.wishlist = state.wishlist.filter((key) => !CRITERIA.find((c) => c.key === key).needsTrade);
   if (state.wishlist) updateWishMatches();
@@ -1000,6 +1003,8 @@ function setLayer(layer) {
   restyleAll();
   drawPins();
   renderLayerControl();
+  // at home the panel follows the map: the start view on the plain map, the overview on "all trades" (D80)
+  if (!state.trade && !state.selected && !state.sim && !state.wishlist && !state.customers) renderSheet();
 }
 
 function stopPlaying() {
@@ -1027,6 +1032,7 @@ function togglePlay() {
 function renderAll() {
   document.getElementById("language").textContent = getLanguage() === "ko" ? "EN" : "한국어";
   document.getElementById("help").setAttribute("aria-label", t("helpButton"));
+  document.getElementById("help").innerHTML = `<span aria-hidden="true">?</span> ${t("helpShort")}`;   // a word, not only "?" (D80)
   document.getElementById("search").placeholder = t("searchPlaceholder");
   document.getElementById("zoom-in").setAttribute("aria-label", t("zoomIn"));
   document.getElementById("zoom-out").setAttribute("aria-label", t("zoomOut"));
@@ -1115,20 +1121,50 @@ function updateSheetTall() {
 }
 
 // ----- Opening view: Seoul at a glance (gaps and suggestions for all trades) -----
+// D80: the opening view chooses nothing. It says how to start in three steps; the overview of every trade's gaps
+// is one tap away ("전체 업종 보기"), and shows when that map view is on.
 function homeView() {
-  const overview = state.overview;
-  // the title says the idea (round 4); "서울 한눈에 보기" names the view above it
-  return `<p class="eyebrow">${t("overviewTitle")}</p>
-    <h2 class="sheet-title">${t("overviewHeadline", overview.candidateDongs)}</h2>
+  return state.layer === "suggested" ? overviewView() : startView();
+}
+
+// The three steps of the app, shown at home and in the welcome, each with the piece of screen it talks about
+function startStepsHtml() {
+  const pictures = [
+    `<span class="trade-chip step-sample" aria-hidden="true">${tradeIcon("카페")}${escapeHtml(tradeName("카페"))}</span>`,
+    `<span class="pin step-sample" aria-hidden="true"><span class="pin-dot"></span><span class="pin-rank">01</span><span class="pin-name">${escapeHtml(t("startSamplePlace"))}</span></span>`,
+    `<span class="kn step-sample" aria-hidden="true"><span class="kn-label">${escapeHtml(t("knShops", tradeName("카페")))}</span>`
+      + `<span class="kn-value">${t("shopsNumber", 12)}</span><span class="kn-compare">${escapeHtml(t("knShopsCompare", 37))}</span></span>`,
+  ];
+  const steps = t("startSteps").map(([title, body], index) => `<li>
+      <span class="step-number">${index + 1}</span>
+      <div><p class="step-title">${title}</p><p class="step-body">${body}</p>${pictures[index]}</div></li>`);
+  return `<ol class="steps start-steps">${steps.join("")}</ol>`;
+}
+
+function startView() {
+  return `<h2 class="sheet-title">${t("startTitle")}</h2>
+    <p class="sheet-lead">${t("startLead")}</p>
+    ${startStepsHtml()}
+    <div class="actions"><button type="button" class="primary-button" id="start-tour">${t("startTour")}</button></div>
     ${referenceNote()}
-    <p class="home-insight">${insightSentence()}</p>
-    <p class="figure-source">${t("homeInsightSource")}</p>
-    ${homeExample()}
+    <section class="box start-more">
+      <h3 class="box-headline">${t("startMoreTitle")}</h3>
+      <div class="start-links">
+        <button type="button" class="secondary-button" id="show-overview">${t("startOverview")}</button>
+        <button type="button" class="secondary-button" id="open-wishlist">${t("wishlistButton")}</button>
+        <button type="button" class="secondary-button" data-open-customers>${t("ownConcept")}</button>
+      </div>
+    </section>`;
+}
+
+// Gaps of every trade at once (the old opening view, D54/D76), now behind a choice and with the method folded away
+function overviewView() {
+  const overview = state.overview;
+  return `<div class="sheet-header"><button type="button" class="icon-button" id="hide-overview" aria-label="${t("back")}">‹</button>
+      <div class="sheet-heading"><p class="eyebrow">${t("overviewTitle")}</p>
+      <h2 class="sheet-title">${t("overviewHeadline", overview.candidateDongs)}</h2></div></div>
+    ${referenceNote()}
     <p class="sheet-lead">${t("overviewIntro")}</p>
-    ${funnelChart(overview)}
-    ${chartHint(t("hintFunnel", overview.gapDongs, overview.candidateDongs, overview.strongDongs))}
-    <p class="fine-print">${t("funnelNote", overview.byChance)}</p>
-    <p class="check-line">${t("funnelCheck", overview.gaps, overview.robust)}</p>
     <section class="box">
       <h3 class="box-headline">${t("tradeBarsTitle")}</h3>
       ${tradeBars()}
@@ -1138,42 +1174,19 @@ function homeView() {
       <h3 class="box-headline">${t("leadsTitle")}</h3>
       ${leadList()}
     </section>
-    <div class="actions"><button type="button" class="secondary-button" id="open-wishlist">${t("wishlistButton")}</button></div>
-    <section class="box">
-      <h3 class="box-headline">${t("ownConceptTitle")}</h3>
-      <p class="sentence small">${t("ownConceptHint")}</p>
-      <div class="actions"><button type="button" class="secondary-button" data-open-customers>${t("ownConcept")}</button></div>
-    </section>
-    <section class="box">
-      <h3 class="box-headline">${t("simIntroTitle")}</h3>
-      <p class="sentence small">${t("simIntro")}</p>
-    </section>
-    <p class="fine-print">${t("homeNote")}</p>`;
+    <details class="more"><summary>${t("overviewMethod")}</summary>
+      <p class="sentence small">${insightSentence()}</p>
+      ${funnelChart(overview)}
+      <p class="fine-print">${t("funnelNote", overview.byChance)}</p>
+      <p class="check-line">${t("funnelCheck", overview.gaps, overview.robust)}</p>
+      <p class="fine-print">${t("homeInsightSource")}</p>
+    </details>`;
 }
 
 // The finding the method rests on: in which trades fewer shops went with higher sales per shop
 function insightSentence() {
   const roomTrades = state.data.trade_patterns.filter((p) => p.pattern === "room").map((p) => tradeName(p.trade));
   return t("homeInsight", Object.keys(state.meta.trade_subtypes).length, roomTrades);
-}
-
-// The idea shown once before any trade is picked (round 3): the strongest lead in a trade where fewer shops went with
-// higher sales, as its missing shops and the report's meter, with a way into its report
-function homeExample() {
-  const roomTrades = new Set(state.data.trade_patterns.filter((p) => p.pattern === "room").map((p) => p.trade));
-  const lead = state.overview.strong.filter(({ candidate }) => roomTrades.has(candidate.trade))
-    .sort((a, b) => (b.candidate.expected - b.candidate.actual) - (a.candidate.expected - a.candidate.actual))[0];
-  if (!lead) return "";
-  const { dong, candidate } = lead;
-  const shops = candidate.actual, expected = Math.round(candidate.expected);
-  return `<div class="home-example">
-      <p class="cell-label">${t("homeExampleLabel", guName(dong), placeName(dong), tradeName(candidate.trade))}</p>
-      <div class="hero-row"><p class="example-figure">${t("heroGapFigure", expected - shops)}</p>
-        <div class="hero-keys"><p class="hero-key"><i aria-hidden="true"></i>${t("heroGapHere", shops)}</p>
-          <p class="hero-key missing"><i aria-hidden="true"></i>${t("heroGapSimilar", expected)}</p></div></div>
-      ${shopsMeter(shops, expected)}
-      <button type="button" class="text-button example-open" data-lead-trade="${escapeHtml(candidate.trade)}" data-code="${dong.code}">${t("homeExampleOpen", escapeHtml(placeName(dong)))}</button>
-    </div>`;
 }
 
 // Gaps -> suggestions -> strongest leads, as three shrinking orange bars (one hue, darker = stronger)
@@ -1263,17 +1276,13 @@ function referenceNote() {
   return `<p class="reference-note">${t("referenceNote")}</p>`;
 }
 
+// D80 onboarding: the welcome is the app in three steps, each next to the piece of screen it means, and one choice:
+// try it on the real screen (the tour) or start. The figures that used to lead it are in the overview.
 function welcomeView() {
-  const cafeClose = state.medians["카페"]?.close;
   return `<h2 class="sheet-title">${t("welcomeTitle")}</h2>
-    <p class="welcome-lead">${t("welcomeLead", `<b>${state.overview.candidateDongs}</b>`)}</p>
-    ${isKnown(cafeClose) ? `<div class="welcome-figure">
-        <p class="cell-label">${t("welcomeFigureLabel")}</p>
-        <p class="example-figure">${t("welcomeFigureNumber", Math.round(cafeClose))}</p>
-        <p class="sentence">${t("welcomeFigureNote")}</p>
-        <p class="figure-source">${t("welcomeFigureSource")}</p></div>` : ""}
-    <p class="sentence">${insightSentence()}</p>
-    <p class="figure-source">${t("homeInsightSource")}</p>
+    <p class="welcome-lead">${t("welcomeLeadSimple")}</p>
+    ${startStepsHtml()}
+    ${referenceNote()}
     <p class="sentence quiet">${t("welcomeBody")}</p>
     <div class="actions"><button type="button" class="secondary-button" id="welcome-skip">${t("welcomeSkip")}</button>
       <button type="button" class="primary-button" id="welcome-start" autofocus>${t("welcomeStart")}</button></div>`;
@@ -1281,16 +1290,14 @@ function welcomeView() {
 
 function helpView() {
   const about = t("aboutPoints").map((point) => `<li>${point}</li>`).join("");
-  const steps = t("homeSteps").map(([title, body], index) =>
-    `<li><span class="step-number">${index + 1}</span><div><p class="step-title">${title}</p><p class="step-body">${body}</p></div></li>`);
   const colors = t("colorKey").map(([role, word, meaning]) =>
     `<li><span class="color-swatch swatch-${role}"></span><b>${word}</b> ${meaning}</li>`);
   return `<h2 class="sheet-title">${t("helpButton")}</h2>
-    <div class="actions tour-replay-row"><button type="button" class="secondary-button" id="tour-replay">${t("helpTour")}</button></div>
+    <section class="section"><h2 class="section-title">${t("howToTitle")}</h2>${startStepsHtml()}</section>
+    <div class="actions tour-replay-row"><button type="button" class="primary-button" id="tour-replay">${t("helpTour")}</button></div>
+    <section class="section"><h2 class="section-title">${t("colorKeyTitle")}</h2><ul class="color-key">${colors.join("")}</ul></section>
     <section class="section"><h2 class="section-title">${t("aboutTitle")}</h2><ul class="about-points">${about}</ul>
-      <p class="fine-print">${t("sources")}</p></section>
-    <section class="section"><h2 class="section-title">${t("howToTitle")}</h2><ol class="steps">${steps.join("")}</ol></section>
-    <section class="section"><h2 class="section-title">${t("colorKeyTitle")}</h2><ul class="color-key">${colors.join("")}</ul></section>`;
+      <p class="fine-print">${t("sources")}</p></section>`;
 }
 
 // kind "welcome" (first visit) or "help" (the ? button); closing the welcome in any way counts as seen
@@ -1360,6 +1367,19 @@ function showTourHome() {
   showOutline("dong-selected", null);
   renderAll();
   setSheetStopAtOnce(0);                 // the opening view's peek: on a small phone, half would hide the map's button
+  fitSeoul({ animate: false });
+}
+
+// Step 3: the example trade chosen, so the map shows its numbered areas and the legend explains the colours (D80:
+// the opening map is plain, so there would be nothing to read)
+function showTourTrade() {
+  chooseTrade(TOUR_TRADE, false);
+  state.wishlist = null;
+  state.wishMatches = new Set();
+  state.selected = null;
+  showOutline("dong-selected", null);
+  renderAll();
+  setSheetStopAtOnce(0);
   fitSeoul({ animate: false });
 }
 
@@ -1434,15 +1454,16 @@ function tourDong() {
   return state.data.dongs.find((dong) => dong.code === TOUR_DONG);
 }
 
+// Step 4 points at the report's key numbers (D80: they replaced the icon picture as the report's first screen)
 function evidenceBox() {
-  return document.querySelector("#sheet-body .icon-rows")?.closest(".box") ?? null;
+  return document.querySelector("#sheet-body .key-numbers");
 }
 
 // What each step points at, measured again on every frame by tour.js
 function tourTargets(step) {
   const rectOf = (element) => element?.getBoundingClientRect();
   if (step === 2) return [rectOf(document.getElementById("trade-step"))];
-  if (step === 3) return [rectOf(document.getElementById("layer-control"))];
+  if (step === 3) return [rectOf(document.getElementById("trade-step")), rectOf(document.getElementById("layer-control"))];
   if (step === 4) {
     // the docked panel ends at the window's edge: when a resize pushes the box past it, bring it back so its ring shows
     const box = evidenceBox(), rect = rectOf(box);
@@ -1484,7 +1505,8 @@ function goToTourStep(step) {
     openHelp("welcome");
     return;
   }
-  if (step <= 3) showTourHome();
+  if (step === 2) showTourHome();
+  else if (step === 3) showTourTrade();
   else showTourExample({ street: step === 5 });
   const [title, body] = tourCopy(step);
   showTourStep({
@@ -1524,7 +1546,7 @@ function tradeView() {
     <button type="button" class="place-card" data-code="${dong.code}">
       <span class="place-name">${escapeHtml(placeName(dong))} <span class="place-gu">${escapeHtml(guName(dong))}</span></span>
       <span class="place-line">${t("candidateLine", name, candidate.actual, Math.round(candidate.expected))}</span>
-      ${shopsMeter(candidate.actual, Math.round(candidate.expected))}
+      <span class="place-verdict">${t("fewerVerdict", Math.max(1, Math.round(candidate.expected - candidate.actual)))}</span>
       ${signalBadgeHtml(dong.trades[state.trade].signal)}
       ${candidate.sales_per_shop === "high" ? `<span class="badge">★ ${t("strongBadge")}</span>` : ""}
     </button>`);
@@ -1534,13 +1556,18 @@ function tradeView() {
     <p class="callout callout-${pattern.pattern}">${statusChip(patternStatus(pattern.pattern), t("patternShort")[pattern.pattern])} ${t("patterns")[pattern.pattern]}</p>
     <div class="place-list">${cards.join("") || `<p class="muted">${t("noCandidates")}</p>`}</div>
     <div class="actions"><button type="button" class="secondary-button" id="open-wishlist">${t("wishlistButton")}</button></div>
-    <div class="mini-stats">
-      <div><p class="mini-value">${salesMedian === null ? "–" : formatWon(salesMedian)}</p><p class="mini-label">${t("seoulMedianSales")}</p></div>
-      <div><p class="mini-value">${closeMedian === null ? "–" : `${closeMedian.toFixed(1)}%`}</p><p class="mini-label">${t("seoulMedianClose")}</p></div>
-    </div>
+    <details class="more"><summary>${t("tradeSeoulTitle", name)}</summary>
+      <div class="kn-grid">
+        ${keyNumber(t("knSalesSeoul"), salesMedian === null ? "–" : formatWon(salesMedian), t("knPer3Months"))}
+        ${keyNumber(t("knCloseSeoul"), closeMedian === null ? "–" : `${closeMedian.toFixed(1)}%`, t("knCloseSeoulNote"))}
+      </div>
+    </details>
     <p class="fine-print">${t("candidateExplain")} ${t("simHintTrade", name)}</p>`;
 }
 
+// D80: a report a shop owner reads in one look. First one sentence and the key numbers, each with what it is
+// compared with and a word (✓ / – / !); then only the two basic charts (sales by time, people by hour); everything
+// else (the checks, notes, every figure) is folded under "자세히 보기".
 function dongView(dong) {
   const gu = guName(dong), name = placeName(dong);
   const inCompare = state.compared.some((d) => d.code === dong.code);
@@ -1553,10 +1580,12 @@ function dongView(dong) {
         <p class="sheet-subtitle">${romanized}${escapeHtml(typeName(dong.type))} · ${escapeHtml(zoneName(dong.zone))}</p></div>
     </div>
     ${referenceNote()}
-    ${state.trade ? readoutSection(dong) + tradeSection(dong) + customersSection(dong) : suggestedTradesSection(dong)}
-    ${peopleSection(dong)}
-    ${healthSection(dong)}
-    ${costSection(dong)}
+    ${state.trade ? tradeVerdict(dong) : suggestedTradesSection(dong)}
+    <section class="key-numbers" aria-label="${escapeHtml(t("readoutTitle"))}">
+      <p class="eyebrow">${t("readoutTitle")}</p>
+      <div class="kn-grid">${(state.trade ? tradeKeyNumbers(dong) : placeKeyNumbers(dong)).join("")}</div>
+    </section>
+    ${basicCharts(dong)}
     ${state.trade
       ? `<div class="actions"><button type="button" class="primary-button" id="simulate-dong">${t("simulateHere", tradeName(state.trade))}</button></div>`
       : `<p class="fine-print">${t("noTradeSimHint")}</p>`}
@@ -1564,116 +1593,187 @@ function dongView(dong) {
       <button type="button" class="secondary-button" id="zoom-stores">${t("zoomToStores")}</button>
       <button type="button" class="secondary-button" id="add-compare" ${inCompare ? "disabled" : ""}>${inCompare ? t("inCompare") : t("addCompare")}</button>
     </div>
-    ${allFigures(dong)}`;
+    ${moreDetails(dong)}`;
 }
 
-// The trade report's first screen (D75): one hero figure and four instrument cells, read in one pass.
-// The sections below stay the evidence (pictures, checks, 읽는 법), so the readout carries numbers, not their sentences.
-function readoutSection(dong) {
-  const name = tradeName(state.trade);
-  const values = dong.trades[state.trade] ?? {};
-  const { sales: salesMedian, close: closeMedian } = state.medians[state.trade];
+// One key number: what it is, the number, what it is compared with, and a word for how it compares
+function keyNumber(label, value, compare = "", chip = "") {
+  return `<div class="kn"><p class="kn-label">${escapeHtml(label)}</p><p class="kn-value">${value}</p>`
+    + `${compare ? `<p class="kn-compare">${compare}</p>` : ""}${chip}</div>`;
+}
+
+// A word in vermilion: what Seoul Scout points at (fewer shops than similar areas)
+function brandChip(label) {
+  return `<span class="status status-brand"><span class="status-icon" aria-hidden="true">↓</span>${escapeHtml(label)}</span>`;
+}
+
+// Higher or lower than Seoul's usual, as a chip; `higherIsBetter` null means neither is better (a plain word)
+function compareChip(value, reference, higherIsBetter, words) {
+  if (!isKnown(value) || !isKnown(reference)) return "";
+  const verdict = judge(value, reference, higherIsBetter ?? true);
+  const above = value > reference;
+  const word = verdict === "neutral" ? words.same : above ? words.higher : words.lower;
+  return statusChip(higherIsBetter === null ? "neutral" : verdict, word);
+}
+
+// Low / middle / high third of Seoul's areas as a chip
+function bandChip(kpi, value, { lowIs = "neutral", highIs = "neutral", words = "bandWords" } = {}) {
+  if (!isKnown(value)) return "";
+  const level = band(seoulValues(kpi), value);
+  const status = level === "low" ? lowIs : level === "high" ? highIs : "neutral";
+  return statusChip(status, t(words)[level]);
+}
+
+// The sentence above the numbers: does this area have fewer of the trade than similar areas?
+function tradeVerdict(dong) {
+  const trade = state.trade, name = tradeName(trade);
+  const values = dong.trades[trade] ?? {};
+  const candidate = dong.trade_candidates.find((c) => c.trade === trade);
   const shops = values.shops ?? 0;
   const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
-  const salesRatio = isKnown(values.sales_per_shop) && salesMedian ? values.sales_per_shop / salesMedian : null;
-  const difference = expected === null ? null : expected - shops;
-  // A suggested area leads with the shops it is missing, the app's idea; any other area with its sales (D76).
-  // The figure, its two values beside it (keyed like the picture), then the picture under both.
-  const showsGap = isCandidate(dong) && difference > 0;
-  const heroBlock = (label, figure, keys, picture) => `
-    <div class="hero">
-      <p class="cell-label">${label}</p>
-      <div class="hero-row"><p class="hero-figure">${figure}</p><div class="hero-keys">${keys}</div></div>
-      ${picture}
-    </div>`;
-  let hero = "";
-  if (showsGap) {
-    hero = heroBlock(t("heroGapLabel", name), t("heroGapFigure", difference),
-      `<p class="hero-key"><i aria-hidden="true"></i>${t("heroGapHere", shops)}</p>
-       <p class="hero-key missing"><i aria-hidden="true"></i>${t("heroGapSimilar", expected)}</p>`,
-      shopsMeter(shops, expected));
-  } else if (salesRatio !== null) {
-    hero = heroBlock(t("heroLabel", name), `${salesRatio.toFixed(1)}<small>×</small>`,
-      `<p class="hero-key"><i aria-hidden="true"></i>${t("heroHere", formatWon(values.sales_per_shop))}</p>
-       <p class="hero-key typical"><i aria-hidden="true"></i>${t("heroSeoul", name, formatWon(salesMedian))}</p>`,
-      pairBars(values.sales_per_shop, salesMedian));
+  let headline = t("headShopsSimilar", name);
+  if (expected !== null && values.resid <= -1) headline = t("verdictFewer", name, Math.max(1, expected - shops));
+  else if (expected !== null && values.resid >= 1) headline = t("verdictMore", name, Math.max(1, shops - expected));
+  const tags = [
+    candidate ? statusChip("good", t("candidateTag")) : "",
+    candidate?.sales_per_shop === "high" ? `<span class="badge">★ ${t("strongBadge")}</span>` : "",
+  ].filter(Boolean).join(" ");
+  return `<section class="verdict">
+      <h3 class="verdict-headline">${headline}</h3>
+      ${tags ? `<p class="box-tag">${tags}</p>` : ""}
+      ${values.signal ? signalDetails(values.signal) : ""}
+    </section>`;
+}
+
+function tradeKeyNumbers(dong) {
+  const trade = state.trade, name = tradeName(trade);
+  const values = dong.trades[trade] ?? {};
+  const { sales: salesMedian, close: closeMedian } = state.medians[trade];
+  const shops = values.shops ?? 0;
+  const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
+  let shopsChip = "";
+  if (expected !== null) {
+    if (values.resid <= -1) shopsChip = brandChip(t("fewerVerdict", Math.max(1, expected - shops)));
+    else if (values.resid >= 1) shopsChip = statusChip("neutral", t("moreVerdict", Math.max(1, shops - expected)));
+    else shopsChip = statusChip("neutral", t("sameVerdict"));
   }
-  // the same rule as the section headline (tradeSection): inside one spread of similar areas is "the same", so the two never disagree
-  const gapIsClear = isKnown(values.resid) ? Math.abs(values.resid) >= 1 : difference !== 0;
-  const differenceWord = !gapIsClear ? t("cellGapSame") : difference > 0 ? t("cellGapFewer") : t("cellGapMore");
-  // signed like the hero and the pins: −N where this area has fewer shops than similar areas (round 4)
-  const signedDifference = difference > 0 ? `−${difference}` : difference < 0 ? `+${-difference}` : "0";
-  const differenceFigure = difference === null ? "–"
-    : `<span class="${gapIsClear ? "" : "figure-quiet"}">${t("cellGapFigure", signedDifference)}</span>`;
-  const busiest = values.time && (values.shops ?? 0) >= MIN_MIX_SHOPS ? values.time.indexOf(Math.max(...values.time)) : -1;
-  // with the gap as the hero, its two cells say what the hero does not: the sales, and how rare the gap is in Seoul
-  const firstCells = showsGap ? [
-    cell(t("cellSales"), salesRatio === null ? "–" : `${salesRatio.toFixed(1)}<small>×</small>`,
-      salesRatio === null ? "" : pairBars(values.sales_per_shop, salesMedian),
-      salesRatio === null ? t("cellNoData") : t("cellSalesCaption", formatWon(values.sales_per_shop), formatWon(salesMedian))),
-    cell(t("cellRank"), t("cellRankFigure", ...gapRank(dong)), spreadStrip(values.resid), t("cellRankCaption", name)),
-  ] : [
-    cell(t("cellShops"), `${shops}${expected === null ? "" : `<small> / ${expected}</small>`}`,
-      expected === null ? "" : shopsMeter(shops, expected), expected === null ? "" : t("shopsCompare", expected)),
-    cell(t("cellGap"), differenceFigure, isKnown(values.resid) ? spreadStrip(values.resid) : "", difference === null ? "" : differenceWord),
+  const ratio = isKnown(values.sales_per_shop) && salesMedian ? values.sales_per_shop / salesMedian : null;
+  const salesWords = { higher: ratio ? t("salesTimes", ratio.toFixed(1)) : "", lower: t("lowerThanUsual"), same: t("sameAsUsual") };
+  const enoughMix = values.time && values.age && shops >= MIN_MIX_SHOPS;
+  const busiest = enoughMix ? values.time.indexOf(Math.max(...values.time)) : -1;
+  const topAge = enoughMix ? values.age.indexOf(Math.max(...values.age)) : -1;
+  const percent = (share) => Math.round(share * 100);
+  return [
+    keyNumber(t("knShops", name), t("shopsNumber", shops), expected === null ? "" : t("knShopsCompare", expected), shopsChip),
+    keyNumber(t("knSales"), isKnown(values.sales_per_shop) ? formatWon(values.sales_per_shop) : "–",
+      isKnown(values.sales_per_shop) ? t("knSeoulCompare", name, isKnown(salesMedian) ? formatWon(salesMedian) : "–") : t("cellNoData"),
+      compareChip(values.sales_per_shop, salesMedian, true, salesWords)),
+    keyNumber(t("knClose"), isKnown(values.close_rate) ? `${values.close_rate.toFixed(1)}%` : "–",
+      isKnown(values.close_rate) ? t("knSeoulCompare", name, isKnown(closeMedian) ? `${closeMedian.toFixed(1)}%` : "–") : t("cellNoData"),
+      compareChip(values.close_rate, closeMedian, false, { higher: t("moreThanUsual"), lower: t("fewerThanUsual"), same: t("sameAsUsual") })),
+    keyNumber(t("cellBusiest"), busiest < 0 ? "–" : t("timeBands")[busiest],
+      busiest < 0 ? t("cellNoData") : t("shareNumber", percent(values.time[busiest]))),
+    keyNumber(t("knBuyers"), topAge < 0 ? "–" : t("buyerAges")[topAge],
+      topAge < 0 ? t("cellNoData") : t("knBuyersCompare", percent(values.age[topAge]), percent(values.female ?? 0))),
+    crowdKeyNumber(dong),
+    rentKeyNumber(dong),
   ];
-  const cells = [
-    ...firstCells,
-    cell(t("cellClose"), isKnown(values.close_rate) ? `${values.close_rate.toFixed(1)}<small>%</small>` : "–",
-      isKnown(values.close_rate) && isKnown(closeMedian) ? pairBars(values.close_rate, closeMedian) : "",
-      // a bare "–" read as an empty slot (round 3): without a rate the caption says so first
-      [isKnown(values.close_rate) ? "" : t("cellNoData"), isKnown(closeMedian) ? t("cellCloseCaption", name, closeMedian.toFixed(1)) : ""]
-        .filter(Boolean).join(" · ")),
-    cell(t("cellBusiest"), busiest < 0 ? "–" : t("timeBands")[busiest],
-      busiest < 0 ? "" : timeStrip(values.time, busiest), busiest < 0 ? t("cellNoData") : t("shareNumber", Math.round(values.time[busiest] * 100))),
+}
+
+// Without a trade: the area itself
+function placeKeyNumbers(dong) {
+  const months = dong.kpi.months_open_avg, vacancy = dong.kpi.vacancy_small_shop;
+  const far = dong.info.rent_area_km > RENT_FAR_KM;
+  return [
+    crowdKeyNumber(dong),
+    keyNumber(t("knResidents"), `${formatNumber(dong.kpi.res_pop)}${t("people")}`, rankText("res_pop", dong.kpi.res_pop)),
+    closeAllKeyNumber(dong),
+    keyNumber(t("knMonths"), t("yearsMonths", Math.floor(months / 12), Math.round(months % 12)), t("knMonthsNote")),
+    rentKeyNumber(dong),
+    keyNumber(t("knVacancy"), far || !isKnown(vacancy) ? "–" : t("healthNumber", Math.round(vacancy)),
+      far ? t("knRentFar") : t("knVacancyNote")),
   ];
-  return `<section class="readout" aria-label="${escapeHtml(t("readoutTitle"))}">${hero}<div class="cells">${cells.join("")}</div></section>`;
 }
 
-// [rank, total]: where this area's gap score sits among every Seoul area with one for the chosen trade, fewest first
-function gapRank(dong) {
-  const scores = state.data.dongs.map((d) => d.trades[state.trade]?.resid).filter(isKnown);
-  const score = dong.trades[state.trade].resid;
-  return [scores.filter((other) => other < score).length + 1, scores.length];
+// All shops of the area: how many of every 100 closed in a year, against Seoul's usual area
+function closeAllKeyNumber(dong) {
+  const close = dong.kpi.close_rate_total, typicalClose = median(seoulValues("close_rate_total"));
+  return keyNumber(t("knCloseAll"), t("healthNumber", Math.round(close)), t("knSeoulAreaCompare", t("healthNumber", Math.round(typicalClose))),
+    compareChip(close, typicalClose, false, { higher: t("moreThanUsual"), lower: t("fewerThanUsual"), same: t("sameAsUsual") }));
 }
 
-function cell(label, figure, picture, caption) {
-  return `<div class="cell"><p class="cell-label">${escapeHtml(label)}</p><p class="cell-figure">${figure}</p>${picture}
-    ${caption ? `<p class="cell-caption">${caption}</p>` : ""}</div>`;
+function crowdKeyNumber(dong) {
+  const crowd = dong.kpi.lp_wd_day;
+  return keyNumber(t("knCrowd"), t("crowdNumber", formatNumber(crowd)), rankText("lp_wd_day", crowd),
+    bandChip("lp_wd_day", crowd, { lowIs: "neutral", highIs: "neutral" }));
 }
 
-// One segment per shop: the shops that exist in ink, the ones similar areas would have in pale vermilion.
-// Past 50 segments they would be thinner than a hairline, so the meter becomes one bar of the same two parts.
-function shopsMeter(shops, expected) {
-  const total = Math.max(shops, expected, 1);
-  if (total > 50) {
-    return `<div class="meter solid" aria-hidden="true"><i style="width:${(shops / total) * 100}%"></i></div>`;
+// Rent as a founder counts it: what a 10-pyeong (33 ㎡) shop pays a month
+function rentKeyNumber(dong) {
+  const rent = dong.kpi.rent_small_shop;
+  if (dong.info.rent_area_km > RENT_FAR_KM || !isKnown(rent)) return keyNumber(t("knRent"), "–", t("knRentFar"));
+  return keyNumber(t("knRent"), t("knRentValue", formatWon(rent * 1000 * 33)), t("rentNumber", rent),   // rent: 천원 per ㎡ a month
+    bandChip("rent_small_shop", rent, { lowIs: "good", highIs: "risk", words: "bandWordsRent" }));
+}
+
+// The two basic charts: when the trade sells (with a trade) and when people are around
+function basicCharts(dong) {
+  const parts = [];
+  const values = state.trade ? dong.trades[state.trade] ?? {} : null;
+  if (values?.time && (values.shops ?? 0) >= MIN_MIX_SHOPS) {
+    const busiest = values.time.indexOf(Math.max(...values.time));
+    parts.push(box({
+      headline: t("headBusiest", t("timeBands")[busiest]),
+      picture: salesTimeChart(values.time, busiest),
+      hint: t("hintSalesTime", t("timeBands")[busiest], Math.round(values.time[busiest] * 100)),
+    }));
   }
-  const segments = Array.from({ length: total }, (_, index) => `<i${index < shops ? "" : ' class="gap"'}></i>`);
-  return `<div class="meter" aria-hidden="true">${segments.join("")}</div>`;
+  const peak = peakOf(dong.hourly);
+  parts.push(box({
+    headline: t("chartPeopleTitle", peak.hour, t(peak.dayType)),
+    picture: `${hourlyChart(dong.hourly)}
+      <p class="chart-caption"><span class="key weekday"></span>${t("weekday")} <span class="key weekend"></span>${t("weekend")}</p>`,
+    hint: t("hintHourly", t(peak.dayType), peak.hour, formatNumber(peak.value)),
+  }));
+  return parts.join("");
 }
 
-// Where this area sits among similar areas: the hatched middle is their usual spread (score −1 to 1), the dot is here.
-// Scores past ±3 sit at the ends.
-function spreadStrip(score) {
-  const at = ((Math.max(-3, Math.min(3, score)) + 3) / 6) * 100;
-  return `<div class="spread" aria-hidden="true"><span class="spread-usual"></span><i style="left:${at}%"></i></div>`
-    + `<p class="spread-ends" aria-hidden="true"><span>${t("spreadFewer")}</span><span>${t("spreadMore")}</span></p>`;
-}
-
-// Each time of day's share of sales as a small column, the busiest one in vermilion
-function timeStrip(shares, busiest) {
-  const highest = Math.max(...shares) || 1;
-  const columns = shares.map((share, index) =>
-    `<i${index === busiest ? ' class="top"' : ""} style="height:${Math.max(6, (share / highest) * 100)}%"></i>`);
-  return `<div class="time-strip" aria-hidden="true">${columns.join("")}</div>`;
-}
-
-// Here (ink) against the usual Seoul shop (hatched), as two thin bars on one scale
-function pairBars(here, typical) {
-  const highest = Math.max(here, typical) || 1;
-  return `<div class="pair-bars" aria-hidden="true"><i style="width:${(here / highest) * 100}%"></i>`
-    + `<i class="typical" style="width:${(typical / highest) * 100}%"></i></div>`;
+// Everything else, folded: sentences rather than charts, then every figure in a table
+function moreDetails(dong) {
+  const lines = [];
+  if (state.trade) {
+    const values = dong.trades[state.trade] ?? {};
+    const { ticket: ticketMedian, weekend: weekendMedian } = state.medians[state.trade];
+    const pattern = state.data.trade_patterns.find((p) => p.trade === state.trade).pattern;
+    lines.push(`<p class="sentence">${t("patterns")[pattern]}</p>`);
+    if (isKnown(values.franchise)) lines.push(`<p class="sentence">${t("franchise", Math.round(values.franchise * 100))}</p>`);
+    lines.push(trendSentence(values));
+    if (values.time && (values.shops ?? 0) >= MIN_MIX_SHOPS) {
+      lines.push(`<p class="sentence">${t("weekendSales", Math.round((values.weekend ?? 0) * 100), t("vsSeoul", weekendMedian ? values.weekend / weekendMedian : 1))}</p>`);
+      if (values.ticket) lines.push(`<p class="sentence">${t("avgTicket", formatPrice(values.ticket), t("vsSeoul", ticketMedian ? values.ticket / ticketMedian : 1))}</p>`);
+    }
+    lines.push(`<p class="fine-print">${t("customersNote")}</p>`);
+  }
+  const ages = ["wd_day_share_0_19", "wd_day_share_20_34", "wd_day_share_35_49", "wd_day_share_50_64", "wd_day_share_65p"]
+    .map((key) => dong.info[key] ?? 0);
+  const ageText = ages.map((share, index) => `${t("ageBands")[index]} ${Math.round(share * 100)}%`).join(" · ");
+  lines.push(`<p class="subhead">${t("whoComes")}</p><p class="sentence">${ageText}</p>`);
+  lines.push(`<p class="sentence">${t("residentsSentence", formatNumber(dong.kpi.res_pop), rankText("res_pop", dong.kpi.res_pop))}</p>`);
+  lines.push(`<p class="sentence">${t("openClose", Math.round(dong.kpi.open_rate_total), Math.round(dong.kpi.close_rate_total))}</p>`);
+  const area = surveyPointName(dong), km = dong.info.rent_area_km;
+  if (km > RENT_FAR_KM) lines.push(`<p class="sentence muted">${t("rentFar", escapeHtml(area), km.toFixed(1))}</p>`);
+  else {
+    lines.push(`<p class="sentence">${t("vacancySentence", Math.round(dong.kpi.vacancy_small_shop))}</p>`);
+    lines.push(`<p class="fine-print">${t("rentWhere", escapeHtml(area), km === 0 ? 0 : km.toFixed(1))}</p>`);
+  }
+  const rows = Object.keys(state.data.kpis).map((key) => {
+    const value = dong.kpi[key];
+    return `<tr><td>${escapeHtml(t("kpiLabels")[key])}</td><td>${value === null ? "–" : value.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td><td>${rankText(key, value)}</td></tr>`;
+  });
+  return `<details class="more"><summary>${t("moreDetails")}</summary>
+      <div class="more-body">${lines.join("")}</div>
+      <p class="subhead">${t("sectionMore")}</p><table class="figures">${rows.join("")}</table>
+    </details>`;
 }
 
 // Without a trade: the trades this neighborhood is suggested for (or has a gap in), each one tap away
@@ -1695,78 +1795,6 @@ function suggestedTradesSection(dong) {
   });
 }
 
-// The chosen trade here, in three boxes: shops against similar neighborhoods, then sales and closures against
-// the usual Seoul shop of the trade
-function tradeSection(dong) {
-  const trade = state.trade, name = tradeName(trade);
-  const values = dong.trades[trade] ?? {};
-  const candidate = dong.trade_candidates.find((c) => c.trade === trade);
-  const { sales: salesMedian, close: closeMedian } = state.medians[trade];
-  const pattern = state.data.trade_patterns.find((p) => p.trade === trade).pattern;
-  const franchise = isKnown(values.franchise) ? ` · ${t("franchise", Math.round(values.franchise * 100))}` : "";
-
-  const shops = values.shops ?? 0;
-  const shopsHeadline = values.resid <= -1 ? t("headShopsFewer", name) : values.resid < 1 ? t("headShopsSimilar", name) : t("headShopsMore", name);
-  const strong = candidate?.sales_per_shop === "high" ? ` <span class="badge">★ ${t("strongBadge")}</span>` : "";
-  const candidateTag = candidate ? `<p class="box-tag">${statusChip("good", t("candidateTag"))}${strong}</p>` : "";
-  // a gap shows its evidence: the icon picture and its 신호 세기 (spec 5.4, D72); everything else keeps the bars
-  const shopsBox = box({
-    headline: shopsHeadline,
-    tag: candidateTag + (values.signal ? signalDetails(values.signal) : ""),
-    picture: values.signal ? iconPicture(trade, placeName(dong), values.expected, shops) : barRows([
-      { label: t("barHere"), value: shops, color: COLORS.ink, text: t("shopsNumber", shops) },
-      { label: t("barSimilar"), value: values.expected, color: COLORS.typical, text: t("shopsNumber", Math.round(values.expected ?? 0)) },
-    ], shopsHeadline),
-    hint: values.signal ? t("hintIcons", placeName(dong), Math.round(values.expected), shops, shopsPerIcon(values.expected))
-      : isKnown(values.expected) ? t("hintShops", name, shops, Math.round(values.expected)) : "",
-    // no figure line in the trade's boxes: the readout above already gives each number (round 4)
-    notes: `<p class="fine-print">${t("patterns")[pattern]}${franchise}</p>`,
-  });
-
-  const salesKey = { good: "headSalesGood", risk: "headSalesRisk" }[judge(values.sales_per_shop, salesMedian, true)] ?? "headSalesNeutral";
-  const salesBox = !isKnown(values.sales_per_shop) ? box({ headline: t("headSalesUnknown", name) }) : box({
-    headline: t(salesKey, name),
-    picture: barRows([
-      { label: t("barHere"), value: values.sales_per_shop, color: COLORS.ink, text: formatWon(values.sales_per_shop) },
-      { label: t("barSeoulShop", name), value: salesMedian, color: COLORS.typical, text: isKnown(salesMedian) ? formatWon(salesMedian) : "" },
-    ], t(salesKey, name)),
-    hint: isKnown(salesMedian) ? t("hintSales", name, formatWon(values.sales_per_shop), formatWon(salesMedian)) : "",
-  });
-
-  const closeKey = { good: "headCloseGood", risk: "headCloseRisk" }[judge(values.close_rate, closeMedian, false)] ?? "headCloseNeutral";
-  const closeBox = !isKnown(values.close_rate) ? box({ headline: t("headCloseUnknown") }) : box({
-    headline: t(closeKey),
-    picture: barRows([
-      { label: t("barHere"), value: values.close_rate, color: COLORS.ink, text: `${values.close_rate.toFixed(1)}%` },
-      { label: t("barSeoulShop", name), value: closeMedian, color: COLORS.typical, text: isKnown(closeMedian) ? `${closeMedian.toFixed(1)}%` : "" },
-    ], t(closeKey)),
-    hint: t("hintClose", name, values.close_rate),
-  });
-  return `<p class="eyebrow">${t("asTrade", name)}</p>${shopsBox}${salesBox}${closeBox}`;
-}
-
-// Who buys the chosen trade here and when (card sales, 2026 Q2), and how it changed over a year (D59)
-function customersSection(dong) {
-  const values = dong.trades[state.trade] ?? {};
-  const { ticket: ticketMedian, weekend: weekendMedian } = state.medians[state.trade];
-  const percent = (share) => Math.round(share * 100);
-  const footer = `${trendSentence(values)}<p class="fine-print">${t("customersNote")}</p>`;
-  if (!values.time || !values.age || (values.shops ?? 0) < MIN_MIX_SHOPS) {
-    return box({ headline: t("customersFew"), notes: footer });
-  }
-  const busiest = values.time.indexOf(Math.max(...values.time));
-  const topAge = values.age.indexOf(Math.max(...values.age));
-  return box({
-    headline: t("headBusiest", t("timeBands")[busiest]),
-    picture: salesTimeChart(values.time, busiest),
-    hint: t("hintSalesTime", t("timeBands")[busiest], percent(values.time[busiest])),
-    notes: `<p class="sentence">${t("mainBuyers", t("buyerAges")[topAge], percent(values.age[topAge]), percent(values.female ?? 0))}</p>
-      <p class="sentence">${t("weekendSales", percent(values.weekend ?? 0), t("vsSeoul", weekendMedian ? values.weekend / weekendMedian : 1))}</p>
-      ${values.ticket ? `<p class="sentence">${t("avgTicket", formatPrice(values.ticket), t("vsSeoul", ticketMedian ? values.ticket / ticketMedian : 1))}</p>` : ""}
-      ${footer}`,
-  });
-}
-
 function trendSentence(values) {
   if (values.shops_change === null || values.shops_change === undefined) return "";
   const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
@@ -1783,32 +1811,6 @@ function salesTimeChart(shares, busiest) {
     color: index === busiest ? COLORS.brand : COLORS.ink, strong: index === busiest,
   }));
   return barRows(rows, t("salesByTime"));
-}
-
-const EVIDENCE_ICON_PX = 18;   // one trade icon in the evidence picture (style.css .icon-row-icons .icon)
-
-// `count` shops as trade icons: whole icons, then one clipped to the part that is left
-function tradeIcons(trade, count, perIcon) {
-  const { whole, part } = iconRow(count, perIcon);
-  const icon = tradeIcon(trade);
-  const partIcon = part > 0 ? `<span class="icon-part" style="width:${(part * EVIDENCE_ICON_PX).toFixed(1)}px">${icon}</span>` : "";
-  return icon.repeat(whole) + partIcon;
-}
-
-function iconRowHtml(kind, label, icons, text) {
-  return `<div class="icon-row ${kind}"><span class="icon-row-label">${escapeHtml(label)}</span>`
-       + `<span class="icon-row-icons">${icons}</span><span class="icon-row-text">${escapeHtml(text)}</span></div>`;
-}
-
-// "비슷한 동네라면 [icon]×12 12곳쯤 · 용답동은 [icon]×3 3곳": a gap's expected and actual shops as icons (spec 5.4)
-function iconPicture(trade, place, expected, actual) {
-  const expectedShops = Math.round(expected);
-  const perIcon = shopsPerIcon(expected);
-  const scale = perIcon > 1 ? `<p class="icon-scale">${t("iconScale", perIcon)}</p>` : "";
-  return `<div class="icon-rows" role="img" aria-label="${escapeHtml(t("iconsAria", place, expectedShops, actual))}">
-      ${iconRowHtml("expected", t("barSimilar"), tradeIcons(trade, expectedShops, perIcon), t("shopsAbout", expectedShops))}
-      ${iconRowHtml("here", t("iconsHere", place), tradeIcons(trade, actual, perIcon), t("shopsNumber", actual))}
-      ${scale}</div>`;
 }
 
 // Three rising bars like a phone's signal, the first 3 / 2 / 1 filled. Drawn, not the signal emoji: no emoji in the build.
@@ -1851,69 +1853,6 @@ function barRows(rows, ariaLabel) {
   return `<div class="bar-rows" role="img" aria-label="${escapeHtml(ariaLabel)}">${lines.join("")}</div>`;
 }
 
-function peopleSection(dong) {
-  const crowd = dong.kpi.lp_wd_day, residents = dong.kpi.res_pop;
-  const peak = peakOf(dong.hourly);
-  const ages = ["wd_day_share_0_19", "wd_day_share_20_34", "wd_day_share_35_49", "wd_day_share_50_64", "wd_day_share_65p"]
-    .map((key) => dong.info[key] ?? 0);
-  const ageColors = ["#cfe3ff", "#8fbcff", "#4d94ff", "#1f6fe0", "#0b4ba6"];
-  const segments = ages.map((share, index) => `<span style="width:${share * 100}%;background:${ageColors[index]}" title="${t("ageBands")[index]} ${Math.round(share * 100)}%"></span>`);
-  const labels = ages.map((share, index) => `<li><span class="dot" style="background:${ageColors[index]}"></span>${t("ageBands")[index]} <b>${Math.round(share * 100)}%</b></li>`);
-  const level = band(seoulValues("lp_wd_day"), crowd);
-  const topAge = ages.indexOf(Math.max(...ages));
-  return box({
-    headline: t({ high: "headCrowdHigh", mid: "headCrowdMid", low: "headCrowdLow" }[level]),
-    picture: `${hourlyChart(dong.hourly)}
-      <p class="chart-caption"><span class="key weekday"></span>${t("weekday")} <span class="key weekend"></span>${t("weekend")} · ${t("peakSentence", peak.hour, t(peak.dayType))}</p>`,
-    hint: t("hintHourly", t(peak.dayType), peak.hour, formatNumber(peak.value)),
-    number: `${t("crowdNumber", formatNumber(crowd))} <span>${rankText("lp_wd_day", crowd)}</span>`,
-    notes: `<p class="sentence">${t("residentsSentence", formatNumber(residents), rankText("res_pop", residents))}</p>
-      <p class="subhead">${t("whoComes")}</p>
-      <div class="age-bar">${segments.join("")}</div>
-      <ul class="age-legend">${labels.join("")}</ul>
-      ${chartHint(t("hintAges", t("ageBands")[topAge], Math.round(ages[topAge] * 100)))}`,
-  });
-}
-
-// All shops in the neighborhood: how many closed in a year, against the usual Seoul neighborhood
-function healthSection(dong) {
-  const open = dong.kpi.open_rate_total, close = dong.kpi.close_rate_total, months = dong.kpi.months_open_avg;
-  const typical = median(seoulValues("close_rate_total"));
-  const headline = t({ low: "headHealthLow", mid: "headHealthMid", high: "headHealthHigh" }[band(seoulValues("close_rate_total"), close)]);
-  return box({
-    headline,
-    picture: barRows([
-      { label: t("barHere"), value: close, color: COLORS.ink, text: `${close.toFixed(1)}%` },
-      { label: t("barSeoulDong"), value: typical, color: COLORS.typical, text: `${typical.toFixed(1)}%` },
-    ], headline),
-    hint: t("hintHealth", close),
-    number: `${t("healthNumber", Math.round(close))} <span>${t("healthCompare")}</span>`,
-    notes: `<p class="sentence">${t("openClose", Math.round(open), Math.round(close))}</p>
-      <p class="sentence">${t("lifespan", Math.floor(months / 12), Math.round(months % 12))}</p>`,
-  });
-}
-
-function costSection(dong) {
-  const rent = dong.kpi.rent_small_shop, vacancy = dong.kpi.vacancy_small_shop;
-  const area = surveyPointName(dong), km = dong.info.rent_area_km;
-  if (km > RENT_FAR_KM) {
-    return box({ headline: t("headRentFar"), notes: `<p class="sentence muted">${t("rentFar", escapeHtml(area), km.toFixed(1))}</p>` });
-  }
-  const typical = median(seoulValues("rent_small_shop"));
-  const headline = t({ low: "headRentLow", mid: "headRentMid", high: "headRentHigh" }[band(seoulValues("rent_small_shop"), rent)]);
-  return box({
-    headline,
-    picture: barRows([
-      { label: t("barHere"), value: rent, color: COLORS.ink, text: t("rentShort", rent) },
-      { label: t("barSeoulDong"), value: typical, color: COLORS.typical, text: t("rentShort", typical) },
-    ], headline),
-    hint: t("hintRent", rent),
-    number: t("rentNumber", rent),
-    notes: `<p class="sentence">${t("vacancySentence", Math.round(vacancy))}</p>
-      <p class="fine-print">${t("rentWhere", escapeHtml(area), km === 0 ? 0 : km.toFixed(1))}</p>`,
-  });
-}
-
 // One idea per box: a plain headline first, then a picture with its 읽는 법, the number and short notes
 // (spec 5.2, 5.7). No picture (a missing value), no hint.
 function box({ headline, picture = "", hint = "", number = "", notes = "", tag = "" }) {
@@ -1927,14 +1866,6 @@ function box({ headline, picture = "", hint = "", number = "", notes = "", tag =
 function chartHint(text) {
   return `<details class="chart-hint"><summary><span class="hint-mark" aria-hidden="true">?</span>${t("hintSummary")}</summary>`
        + `<p>${escapeHtml(text)}</p></details>`;
-}
-
-function allFigures(dong) {
-  const rows = Object.keys(state.data.kpis).map((key) => {
-    const value = dong.kpi[key];
-    return `<tr><td>${escapeHtml(t("kpiLabels")[key])}</td><td>${value === null ? "–" : value.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td><td>${rankText(key, value)}</td></tr>`;
-  });
-  return `<details class="more"><summary>${t("sectionMore")}</summary><table class="figures">${rows.join("")}</table></details>`;
 }
 
 // People by hour, weekday (line and area) and weekend (dashed). The lines stretch with the panel;
@@ -1966,12 +1897,8 @@ function hourlyChart(hourly, { days = ["weekday", "weekend"], shade = [] } = {})
 // The legend's key to the numbered pins and their ★ (D75). The "−N곳" example is pin 01's own figure, so the key
 // never shows a number the map does not have (round 3: a fixed "−25곳" read as data on every trade).
 function pinKeyHtml() {
-  const first = state.trade ? pinnedDongs()[0] : null;
-  const candidate = first ? candidateOf(first.dong) : null;
-  const missing = candidate ? Math.round(candidate.expected - candidate.actual) : 0;
   return `<p class="legend-extra legend-pin-key"><span class="pin" aria-hidden="true"><span class="pin-dot"></span>`
     + `<span class="pin-rank">01</span></span>${t(state.trade ? "pinKeyTrade" : "pinKeyHome")}</p>`
-    + (missing > 0 ? `<p class="legend-extra"><b class="pin-missing">${t("pinMissing", missing)}</b> ${t("pinMissingKey")}</p>` : "")
     + `<p class="legend-extra"><b class="pin-star" aria-hidden="true">★</b> ${t("strongBadge")}</p>`;
 }
 
@@ -2061,9 +1988,9 @@ function shopLegendHtml() {
   for (const kind of state.extraKinds) {
     rows.push(`<li>${markerSvg("extra", kindIconKey(kind, state.meta))}<span>${escapeHtml(state.meta.subtypes[kind])}</span></li>`);
   }
-  const marked = state.trade || state.extraKinds.length;
   const other = state.dots.active ? t("legendOtherShops") : t("legendOtherShopsZoom");
-  rows.push(`<li><span class="dot-key ${marked ? "muted" : "store"}"></span><span>${other}</span></li>`);
+  const sample = ["cafe", "food", "retail"].map((key) => markerSvg("group", key)).join("");
+  rows.push(`<li><span class="legend-icons">${sample}</span><span>${other}</span></li>`);
   return `<div class="legend-shops"><p class="legend-title">${t("legendShopsTitle")}</p><ul>${rows.join("")}</ul></div>`;
 }
 
@@ -2163,6 +2090,9 @@ function bindSheet() {
     chip.addEventListener("click", () => openLead(chip.dataset.pickTrade, state.selected));
   }
   on("toggle-leads", () => { state.allLeads = !state.allLeads; renderSheet({ keepScroll: true }); });
+  on("start-tour", beginTour);
+  on("show-overview", () => setLayer("suggested"));
+  on("hide-overview", () => setLayer("none"));
   on("open-wishlist", openWishlist);
   on("wishlist-back", closeWishlist);
   for (const button of document.querySelectorAll("#sheet-body [data-open-customers]")) {
@@ -2338,7 +2268,7 @@ function closeCustomers() {
   state.customers = null;
   state.selected = null;
   showOutline("dong-selected", null);
-  state.layer = "suggested";
+  state.layer = "none";
   drawPins();
   renderAll();
   writeLink();
@@ -2445,8 +2375,7 @@ function customerDongView(dong) {
     ${referenceNote()}
     ${customerSection(dong)}
     ${similarSection(dong)}
-    ${healthSection(dong)}
-    ${costSection(dong)}
+    <section class="key-numbers"><div class="kn-grid">${[closeAllKeyNumber(dong), rentKeyNumber(dong)].join("")}</div></section>
     <div class="actions"><button type="button" class="secondary-button" id="zoom-stores">${t("zoomToStores")}</button></div>`;
 }
 
