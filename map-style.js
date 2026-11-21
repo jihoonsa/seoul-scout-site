@@ -8,7 +8,7 @@ export const DOTS_BEFORE = "stations-dot";     // store dots sit under the stati
 
 // The ink atlas (D75, design/DESIGN.md): white land on a neutral ground, water in a fine hatch, no yellow roads
 const COLORS = {
-  outside: "#f4f5f3", land: "#ffffff", water: "#e1e9ec", waterLine: "#86a0ab", waterText: "#4f6c77", green: "#eef2ea",
+  outside: "#f4f5f3", land: "#ffffff", water: "#e1e9ec", waterLine: "#86a0ab", waterText: "#4f6c77", green: "#e7ede3",
   road: "#ffffff", roadCasing: "#e4e5e1", highway: "#ffffff", highwayCasing: "#cfd1cc", rail: "#c9cbc6",
   building: "#f1f2ef", buildingLine: "#e3e4e0", text: "#6a6d71", textStrong: "#3a3c3f", halo: "#ffffff",
 };
@@ -23,6 +23,14 @@ export function waterHatchImage() {
   for (let row = 0; row < size; row++) paint(row, row === 4 || row === 5 ? [0xa9, 0xbd, 0xc5] : [0xe1, 0xe9, 0xec]);
   return { width: size, height: size, data };
 }
+// D84.1: what a place looks like, in muted neutrals under every tint (not zoning, no beige, and none of the
+// meaning colours: green stays "good" and blue "people"; parks are a gray-green, water keeps its gray-blue hatch).
+// OpenStreetMap in Seoul marks homes well (most apartment blocks), shops and factories only in part.
+const LAND_USE = [
+  { kinds: ["residential"], color: "#f1f2ef" },                         // apartment blocks and houses
+  { kinds: ["commercial", "retail"], color: "#e7e8ee" },                // shopping streets and offices
+  { kinds: ["industrial", "railway"], color: "#e1e2df" },               // factories, depots and rail yards
+];
 const GREEN_KINDS = ["park", "wood", "forest", "grass", "garden", "cemetery", "golf_course", "nature_reserve",
   "meadow", "scrub", "recreation_ground", "village_green", "allotments", "pitch", "playground", "national_park"];
 const LANDMARK_KINDS = ["university", "college", "park", "mall", "hospital"];
@@ -67,6 +75,8 @@ export function baseStyle(language, basemapUrl) {
       { id: "earth", type: "fill", source: "basemap", "source-layer": "earth", paint: { "fill-color": COLORS.land } },
       { id: "landcover", type: "fill", source: "basemap", "source-layer": "landcover", maxzoom: 8,
         filter: ["in", ["get", "kind"], ["literal", ["forest", "grassland", "scrub"]]], paint: { "fill-color": COLORS.green, "fill-opacity": 0.5 } },
+      ...LAND_USE.map(({ kinds, color }) => ({ id: `landuse-${kinds[0]}`, type: "fill", source: "basemap", "source-layer": "landuse",
+        minzoom: 11, filter: ["in", ["get", "kind"], ["literal", kinds]], paint: { "fill-color": color } })),
       { id: "landuse-green", type: "fill", source: "basemap", "source-layer": "landuse",
         filter: ["in", ["get", "kind"], ["literal", GREEN_KINDS]], paint: { "fill-color": COLORS.green } },
       { id: "water", type: "fill", source: "basemap", "source-layer": "water",

@@ -1,28 +1,29 @@
 // Seoul Scout colors: one meaning per color, everywhere (map, panels, charts, buttons). style.css repeats these
 // values as CSS variables (--brand, --good, ...) and map-style.js has the base map's; change them together (D75).
 //
-//   vermilion = you and our suggestions: the chosen trade, suggested neighborhoods, gaps, your shop in the simulation
+//   pink      = you and our suggestions: the chosen trade and its shops, suggested neighborhoods, gaps, your shop (D83)
 //   green     = good for a founder (always with ✓ and a word)
-//   raspberry = risk (always with ! and a word): competitors, closures, crowded areas
+//   red       = risk only (always with ! and a word): closures, competitors within your shop's walk, crowded areas (D83)
 //   gray      = average, no data, other stores
 //   blue      = people (foot traffic, ages)
 //   violet    = cost (rent)
 //   ink       = text, "here" in a chart, and what you selected (outline of a neighborhood or building)
-// Text colors reach 4.5:1 on white; raspberry competitor dots and gray store dots stay apart for color-blind readers.
+// Text colors reach 4.5:1 on white; red competitor dots and gray store dots stay apart for color-blind readers.
+// D83: the old vermilion default read as alarm; pink is calmer, and red now means risk and nothing else.
 
 export const COLORS = {
-  brand: "#d4401f",            // marks on the map: pins, outlines, tints, your shop (white text on it 4.6:1)
-  brandStrong: "#b8361a",      // vermilion text and links (5.9:1)
+  brand: "#d6336c",            // pink marks: pins, outlines, tints, the chosen trade's shops, your shop (white text on it 4.6:1)
+  brandStrong: "#b8285c",      // pink text and links (6.0:1)
   good: "#1f8150",
   goodText: "#1a6b40",
-  risk: "#c22a5c",
-  riskText: "#a3204d",
+  risk: "#d92d20",             // red, risk only (4.8:1)
+  riskText: "#b42318",         // (6.6:1)
   neutral: "#8a8d91",
   neutralText: "#5b5f64",
   people: "#1f6fc5",
   peopleDark: "#0b4ba6",
   cost: "#6e4bd8",
-  crowded: "#6a6d71",          // "more shops than similar neighborhoods": the other side of a gap
+  crowded: "#6a6d71",          // "more shops than its crowd would usually mean": the other side of a gap
   ink: "#141517",
   ground: "#f4f5f3",           // behind the map and outside Seoul (style.css --ground, map-style.js outside)
   store: "#5b5f64",            // a store dot when no trade is chosen
@@ -42,20 +43,20 @@ export const STATUS = {
 // The legend and the meters show the wash itself. The map draws it see-through, so streets and parks show under it:
 // its colour is darkened so that, over white land at the city view, it lands exactly on the wash (round 3: off-token).
 // D80: the five classes were washes so pale that neighbouring areas looked the same. They are now clearly apart:
-// a strong and a light vermilion for fewer shops, nothing for similar, a light and a dark slate for more.
+// a strong and a light pink (D83) for fewer shops, nothing for similar, a light and a dark slate for more.
 export const GAP_STYLE = [
-  { upTo: -2, ...seeThrough("#ee7a55", 0.75) },
-  { upTo: -1, ...seeThrough("#f9c3ab", 0.55) },
+  { upTo: -2, ...seeThrough("#f07fa6", 0.75) },
+  { upTo: -1, ...seeThrough("#fbc8d9", 0.55) },
   { upTo: 1, wash: "#ffffff", opacity: 0, color: "#000000" },
   { upTo: 2, ...seeThrough("#d3d8de", 0.5) },
   { upTo: Infinity, ...seeThrough("#9ea6b0", 0.7) },
 ];
 
-// "All trades" view (and wishlist matches): vermilion, deeper the more trades an area is worth a look for (D80: stronger)
+// "All trades" view (and wishlist matches): pink, deeper the more trades an area is worth a look for (D80: stronger)
 export const SUGGESTED_STYLE = {
-  gapOnly: seeThrough("#fbd5c4", 0.5),
-  one: seeThrough("#f29a78", 0.7),
-  several: seeThrough("#d9532f", 0.85),
+  gapOnly: seeThrough("#fcd9e5", 0.5),
+  one: seeThrough("#f58fb2", 0.7),
+  several: seeThrough("#de4f84", 0.85),
 };
 
 // A wash drawn see-through: its colour is the one that, at this opacity over white, shows as the wash

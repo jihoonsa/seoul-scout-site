@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Seoul Scout</title>
-  <meta name="description" content="서울 창업 동네 찾기: 업종별 살펴볼 동네, 유동인구, 문 닫는 가게, 임대료를 지도에서 쉽게.">
+  <meta name="description" content="Find where to open a shop in Seoul: areas worth a look per trade, foot traffic, closures and rent on one map.">
   <link rel="icon" href="mark.svg" type="image/svg+xml">
   <link rel="preload" href="vendor/pretendard/Pretendard-Regular.subset.woff2" as="font" type="font/woff2" crossorigin>
   <!-- the panel's numbers come from this file: start it while the map library loads -->
@@ -14,21 +14,23 @@
 </head>
 <body>
   <div class="app">
-    <div id="map" class="map" aria-label="서울 지도"></div>
+    <div id="map" class="map" aria-label="Map of Seoul"></div>
     <div id="tooltip" class="tooltip" hidden></div>
     <div id="store-card" class="store-card" role="dialog" hidden></div>
 
     <!-- Left column (desktop): everything that floats over the map stacks here, so a wide panel never covers it.
          On phones the column is display: contents and each item keeps its own place. -->
     <div class="left-column">
+      <!-- Desktop: folds the whole column into this one button (D83) -->
+      <button type="button" id="left-fold" class="left-fold" aria-expanded="true"></button>
       <!-- Top left: brand, search, the trade question -->
       <section id="top-card" class="card top-card">
         <header class="brand-row">
           <div class="brand-mark">
             <img class="mark" src="mark.svg" alt="" width="38" height="38">
             <div>
-              <p class="brand">서울 스카웃</p>
-              <p class="tagline" id="tagline">내 업종 가게가 모자란 동네 찾기</p>
+              <p class="brand">Seoul Scout</p>
+              <p class="tagline" id="tagline"></p>
             </div>
           </div>
           <div class="top-buttons">

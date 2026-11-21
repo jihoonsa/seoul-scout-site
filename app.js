@@ -11,10 +11,10 @@ import { COLORS, GAP_STYLE, STATUS, SUGGESTED_STYLE, gapStyle, hexToRgba, underW
 import { DOTS_MIN_ZOOM, LABELS_MIN_ZOOM, StoreDots } from "./store-dots.js";
 import { DOTS_BEFORE, OUTLINE_BEFORE, TINT_BEFORE, WATER_HATCH, baseStyle, labelTexts, waterHatchImage } from "./map-style.js";
 import {
-  SURVIVAL_YEARS, TYPICAL_AREA_M2, WALK_RADIUS_M, circlePolygon, gapSpreadByTrade, judge, simulateOpening,
+  SURVIVAL_YEARS, TYPICAL_AREA_M2, WALK_RADIUS_M, circlePolygon, gapSpreadByTrade, simulateOpening,
 } from "./simulation.js";
 import { CRITERIA, findMatches, wishlistReferences } from "./wishlist.js";
-import { initPanel, renderPanelLabels, showPanel } from "./panel.js";
+import { initPanel, renderPanelLabels, showLeftColumn, showPanel } from "./panel.js";
 import { tradeIcon } from "./icons.js";
 import { closeTour, showTourStep } from "./tour.js";
 import { GROUP_COLORS, addMarkerImages, kindIconKey, markerSvg } from "./shop-markers.js";
@@ -70,7 +70,7 @@ const LAYERS_ICON = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none"
   + `<path d="M9 2.5 16 6.25 9 10 2 6.25Z"/><path d="M2 9.75 9 13.5l7-3.75"/></svg>`;
 
 // Map views: what the neighborhoods are tinted by. Tints sit under the roads and labels, so the map stays readable.
-// Colors follow colors.js: orange = gaps and suggestions, blue = people, green = sales, red = risk, violet = cost.
+// Colors follow colors.js: pink = gaps and suggestions, blue = people, green = sales, red = risk, violet = cost.
 // D80: "none" comes first and is the opening view, so nothing is chosen or coloured until the founder asks for it.
 const LAYERS = {
   none: { label: () => t("layerNone") },
@@ -121,7 +121,7 @@ if (location.hostname === "localhost") window.seoulScout = state;   // for check
 // ---------------------------------------------------------------------------
 async function start() {
   const settings = readLink();
-  setLanguage(settings.lang ?? "ko");
+  setLanguage(settings.lang ?? "en");   // English by default: the class presents in English (D86)
   try {
     const [data, meta, guBorders] = await Promise.all([fetchJson("data/dongs.json"), fetchJson("data/store_meta.json"),
       fetchJson("data/gu_borders.json")]);
@@ -330,7 +330,7 @@ function drawNeighborhoods() {
   map.addLayer({ id: "seoul-border", type: "line", source: "outside-seoul",
     paint: { "line-color": COLORS.ink, "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.2, 14, 2.2] } }, OUTLINE_BEFORE);
 
-  // Suggested neighborhoods (and wishlist matches) get a vermilion outline; the selected one a dark ink outline
+  // Suggested neighborhoods (and wishlist matches) get a pink outline; the selected one a dark ink outline
   const highlighted = ["boolean", ["feature-state", "highlighted"], false];
   // Close in, the tint thins (half by zoom 14, under a third at street level), so the streets and buildings stay readable
   const tint = ["coalesce", ["feature-state", "opacity"], 0];
@@ -399,7 +399,7 @@ function isCandidate(dong) {
   return Boolean(state.trade) && dong.trade_candidates.some((c) => c.trade === state.trade);
 }
 
-// Orange outline: wishlist matches while the wishlist is open, else the suggestions of the chosen trade (or of all trades)
+// Pink outline: wishlist matches while the wishlist is open, else the suggestions of the chosen trade (or of all trades)
 function isHighlighted(dong) {
   if (state.wishlist) return state.wishMatches.has(dong.code);
   if (state.trade) return isCandidate(dong);
@@ -423,7 +423,7 @@ function tintOf(dong) {
   return { color: layer.color, opacity: OPACITY_STEPS[quantileClass(value, state.breaks)] };
 }
 
-// Opening view: a light orange where a trade has a gap, stronger where gaps passed the checks (suggested)
+// Opening view: a light pink where a trade has a gap, stronger where gaps passed the checks (suggested)
 function suggestedTint(dong) {
   const summary = state.overview.byDong.get(dong.code);
   if (!summary) return NO_TINT;
@@ -502,7 +502,7 @@ function pinRank(n) {
   return String(n).padStart(2, "0");
 }
 
-// A pin: the vermilion dot sits on the neighborhood's centre, the rank and the name to its right (D75)
+// A pin: the pink dot sits on the neighborhood's centre, the rank and the name to its right (D75)
 function drawPins() {
   for (const pin of state.pins) pin.remove();
   state.pins = [];
@@ -512,7 +512,7 @@ function drawPins() {
     button.className = `pin${strong ? " strong" : ""}`;
     button.type = "button";
     // D80: the pin carries only its number and name; "−25곳" on the map was hard to read, so the shop counts
-    // live in the list and the report, said in words ("12곳 · 비슷한 동네는 보통 37곳")
+    // live in the list and the report, said in words ("12곳 · 사람 수로 보면 보통 37곳")
     button.innerHTML = `<span class="pin-dot" aria-hidden="true"></span><span class="pin-rank">${pinRank(index + 1)}</span>`
       + `<span class="pin-name">${escapeHtml(placeName(dong))}${strong ? '<span class="pin-star" aria-hidden="true">★</span>' : ""}</span>`;
     button.addEventListener("click", (event) => { event.stopPropagation(); selectDong(dong, { zoom: true }); });
@@ -652,7 +652,8 @@ function storeDotAt(point) {
   let best = null, bestDistance = Infinity;
   for (const feature of state.map.queryRenderedFeatures(box, { layers: ["store-icons", "shop-labels", "shop-outside"] })) {
     const at = state.map.project(feature.geometry.coordinates);
-    const distance = (at.x - point.x) ** 2 + (at.y - point.y) ** 2;
+    const y = at.y + (feature.properties.shift ?? 0);   // a stacked marker is drawn this far below its building's point
+    const distance = (at.x - point.x) ** 2 + (y - point.y) ** 2;
     if (distance < bestDistance) {
       best = feature;
       bestDistance = distance;
@@ -715,7 +716,8 @@ function handleClick(event) {
   }
   closeCard();
   const dong = dongAt(event.point);
-  if (dong) selectDong(dong, { zoom: false });
+  if (dong && dong === state.selected) clearSelection();   // a second tap on the chosen area lets it go; the map stays (D83)
+  else if (dong) selectDong(dong, { zoom: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,6 +1043,7 @@ function renderAll() {
   document.getElementById("dots-loading").textContent = t("loadingStores");
   document.getElementById("sources").textContent = t("sources");
   document.querySelector(".brand").textContent = t("appName");
+  document.getElementById("map").setAttribute("aria-label", t("mapLabel"));
   labelSheetHandle();
   document.getElementById("tagline").textContent = t("appTagline");
   renderPanelLabels();
@@ -1177,6 +1180,7 @@ function overviewView() {
     <details class="more"><summary>${t("overviewMethod")}</summary>
       <p class="sentence small">${insightSentence()}</p>
       ${funnelChart(overview)}
+      ${chartHint(t("hintFunnel", overview.gapDongs, overview.candidateDongs, overview.strongDongs))}
       <p class="fine-print">${t("funnelNote", overview.byChance)}</p>
       <p class="check-line">${t("funnelCheck", overview.gaps, overview.robust)}</p>
       <p class="fine-print">${t("homeInsightSource")}</p>
@@ -1189,7 +1193,7 @@ function insightSentence() {
   return t("homeInsight", Object.keys(state.meta.trade_subtypes).length, roomTrades);
 }
 
-// Gaps -> suggestions -> strongest leads, as three shrinking orange bars (one hue, darker = stronger)
+// Gaps -> suggestions -> strongest leads, as three shrinking pink bars (one hue, darker = stronger)
 function funnelChart(overview) {
   // counted in neighborhoods (곳), like the welcome and the map; the trade count (건) follows in the small line
   const rows = [
@@ -1203,7 +1207,7 @@ function funnelChart(overview) {
   return `<ol class="funnel" aria-label="${t("funnelTitle")}">${items.join("")}</ol>`;
 }
 
-// Suggested neighborhoods per trade: one orange bar each (★ part darker), with what a gap means for the trade
+// Suggested neighborhoods per trade: one pink bar each (★ part darker), with what a gap means for the trade
 function tradeBars() {
   const trades = Object.keys(state.meta.trade_subtypes);
   const counts = trades.map((trade) => {
@@ -1493,6 +1497,7 @@ function tourCopy(step) {
 // The welcome's start button: remember the screen once (going back to the welcome and on keeps the first one)
 function beginTour() {
   tour.saved ??= viewSnapshot();
+  showLeftColumn();   // the tour points at the trade chips and the map view
   document.getElementById("help-dialog").close();
   goToTourStep(2);
 }
@@ -1565,66 +1570,183 @@ function tradeView() {
     <p class="fine-print">${t("candidateExplain")} ${t("simHintTrade", name)}</p>`;
 }
 
-// D80: a report a shop owner reads in one look. First one sentence and the key numbers, each with what it is
-// compared with and a word (✓ / – / !); then only the two basic charts (sales by time, people by hour); everything
+// D80: a report a shop owner reads in one look. First one sentence and the key numbers (D81: only the shops tile
+// says what it is compared with; the others show the area's own number); then only the two basic charts (sales by time, people by hour); everything
 // else (the checks, notes, every figure) is folded under "자세히 보기".
 function dongView(dong) {
-  const gu = guName(dong), name = placeName(dong);
-  const inCompare = state.compared.some((d) => d.code === dong.code);
-  const kicker = [state.trade ? tradeName(state.trade) : "", gu].filter(Boolean).map(escapeHtml).join(" / ");
-  const romanized = getLanguage() === "ko" ? `<span class="sheet-romanized">${escapeHtml(dong.dong_en)}</span>` : "";
+  if (!state.trade) return pickTradeView(dong);
   return `
-    <div class="sheet-header">
-      <button type="button" class="icon-button" id="sheet-back" aria-label="${t("back")}">‹</button>
-      <div class="sheet-heading"><p class="kicker">${kicker}</p><h2 class="sheet-title report-title">${escapeHtml(name)}</h2>
-        <p class="sheet-subtitle">${romanized}${escapeHtml(typeName(dong.type))} · ${escapeHtml(zoneName(dong.zone))}</p></div>
-    </div>
+    ${sheetHeader(dong)}
     ${referenceNote()}
-    ${state.trade ? tradeVerdict(dong) : suggestedTradesSection(dong)}
+    ${areaSummary(dong)}
+    ${storySection(dong)}
+    ${tradeVerdict(dong)}
     <section class="key-numbers" aria-label="${escapeHtml(t("readoutTitle"))}">
       <p class="eyebrow">${t("readoutTitle")}</p>
-      <div class="kn-grid">${(state.trade ? tradeKeyNumbers(dong) : placeKeyNumbers(dong)).join("")}</div>
+      <div class="kn-grid">${tradeKeyNumbers(dong).join("")}</div>
     </section>
     ${basicCharts(dong)}
-    ${state.trade
-      ? `<div class="actions"><button type="button" class="primary-button" id="simulate-dong">${t("simulateHere", tradeName(state.trade))}</button></div>`
-      : `<p class="fine-print">${t("noTradeSimHint")}</p>`}
+    <div class="actions"><button type="button" class="primary-button" id="simulate-dong">${t("simulateHere", tradeName(state.trade))}</button></div>
     <div class="actions">
       <button type="button" class="secondary-button" id="zoom-stores">${t("zoomToStores")}</button>
-      <button type="button" class="secondary-button" id="add-compare" ${inCompare ? "disabled" : ""}>${inCompare ? t("inCompare") : t("addCompare")}</button>
+      ${addCompareButton(dong)}
     </div>
     ${moreDetails(dong)}`;
 }
 
-// One key number: what it is, the number, what it is compared with, and a word for how it compares
+function sheetHeader(dong) {
+  const kicker = [state.trade ? tradeName(state.trade) : "", guName(dong)].filter(Boolean).map(escapeHtml).join(" / ");
+  const romanized = getLanguage() === "ko" ? `<span class="sheet-romanized">${escapeHtml(dong.dong_en)}</span>` : "";
+  return `<div class="sheet-header">
+      <button type="button" class="icon-button" id="sheet-back" aria-label="${t("back")}">‹</button>
+      <div class="sheet-heading"><p class="kicker">${kicker}</p><h2 class="sheet-title report-title">${escapeHtml(placeName(dong))}</h2>
+        <p class="sheet-subtitle">${romanized}${escapeHtml(typeName(dong.type))} · ${escapeHtml(zoneName(dong.zone))}</p></div>
+    </div>`;
+}
+
+function addCompareButton(dong) {
+  const inCompare = state.compared.some((d) => d.code === dong.code);
+  return `<button type="button" class="secondary-button" id="add-compare" ${inCompare ? "disabled" : ""}>${inCompare ? t("inCompare") : t("addCompare")}</button>`;
+}
+
+// D82: an area tapped without a trade opens no report; the panel asks for a trade, the area's leads first
+function pickTradeView(dong) {
+  const leads = state.overview.byDong.get(dong.code);
+  const shown = new Set([...(leads?.suggested ?? []).map((c) => c.trade), ...(leads?.gaps ?? [])]);
+  const others = Object.keys(state.meta.trade_subtypes).filter((trade) => !shown.has(trade))
+    .map((trade) => `<button type="button" class="trade-chip" data-pick-trade="${escapeHtml(trade)}">${tradeIcon(trade)}${escapeHtml(tradeName(trade))}</button>`);
+  return `
+    ${sheetHeader(dong)}
+    <p class="pick-trade-lead">${t("pickTradeLead")}</p>
+    ${suggestedTradesSection(dong)}
+    <section class="box">
+      <h3 class="box-headline">${shown.size ? t("pickTradeOthers") : t("pickTradeAll")}</h3>
+      <div class="chip-wrap">${others.join("")}</div>
+    </section>
+    <div class="actions">${addCompareButton(dong)}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// The data story (D82): once a trade and an area are picked, the area's numbers one at a time, the map changing to
+// match each step (its layer and legend). On by default; turning it off is remembered on this device.
+// ---------------------------------------------------------------------------
+const STORY_KEY = "seoulScout.story";
+const STORY_HOUR = 13;   // the crowd step shows weekday 1 pm, the afternoon the model counts
+const story = { on: readStoryOn(), step: 0, key: "" };
+
+function readStoryOn() {
+  try { return localStorage.getItem(STORY_KEY) !== "off"; } catch { return true; }   // storage blocked: on
+}
+
+// Each step: the map layer it shows and its sentence, from this area's own numbers; steps without data are left out
+function storySteps(dong) {
+  const values = dong.trades[state.trade] ?? {}, name = tradeName(state.trade);
+  const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
+  const steps = [{ layer: "tradeGap", text: expected === null ? t("storyShopsOnly", name, values.shops ?? 0)
+    : t("storyShops", name, values.shops ?? 0, expected) }];
+  steps.push({ layer: "crowd", text: t("storyCrowd", formatNumber(dong.hourly.weekday[STORY_HOUR])) });
+  if (isKnown(values.sales_per_shop)) steps.push({ layer: "tradeSales", text: t("storySales", name, formatWon(values.sales_per_shop)) });
+  steps.push({ layer: "close", text: t("storyClose", Math.round(dong.kpi.close_rate_total)) });
+  const rent = dong.kpi.rent_small_shop;
+  if (dong.info.rent_area_km <= RENT_FAR_KM && isKnown(rent)) steps.push({ layer: "rent", text: t("storyRent", formatWon(rent * 1000 * 33)) });
+  return steps;
+}
+
+function storySection(dong) {
+  const key = `${state.trade}|${dong.code}`;
+  if (story.key !== key) {   // a new area or trade starts the story again, on the map its first step shows
+    story.key = key;
+    story.step = 0;
+    if (story.on && state.layer !== "tradeGap") queueMicrotask(() => setLayer("tradeGap"));
+  }
+  if (!story.on) {
+    return `<div class="story-off"><button type="button" class="secondary-button" id="story-toggle">${t("storyOn")}</button></div>`;
+  }
+  const steps = storySteps(dong), step = Math.min(story.step, steps.length - 1);
+  return `<section class="story" aria-label="${escapeHtml(t("storyTitle"))}">
+      <div class="story-head"><p class="eyebrow">${t("storyTitle")} <span class="story-count">${step + 1} / ${steps.length}</span></p>
+        <button type="button" class="text-button" id="story-toggle">${t("storyOff")}</button></div>
+      <p class="story-text">${steps[step].text}</p>
+      <div class="story-nav">
+        <button type="button" class="secondary-button" id="story-prev" ${step === 0 ? "disabled" : ""}>‹ ${t("storyPrev")}</button>
+        <button type="button" class="primary-button" id="story-next" ${step === steps.length - 1 ? "disabled" : ""}>${t("storyNext")} ›</button>
+      </div>
+    </section>`;
+}
+
+function goToStoryStep(step) {
+  const steps = storySteps(state.selected);
+  story.step = Math.max(0, Math.min(step, steps.length - 1));
+  const { layer } = steps[story.step];
+  if (layer === "crowd") { state.dayType = "weekday"; state.hour = STORY_HOUR; }
+  setLayer(layer);
+  renderSheet({ keepScroll: true });
+}
+
+function toggleStory() {
+  story.on = !story.on;
+  try { localStorage.setItem(STORY_KEY, story.on ? "on" : "off"); } catch { /* storage blocked: on for this visit only */ }
+  story.step = 0;
+  if (state.layer !== "tradeGap") setLayer("tradeGap");   // either way, back to the trade's own map
+  renderSheet({ keepScroll: true });
+}
+
+// D82: the area in words, before any trade's numbers: who is here (residents or visitors, weekdays or weekends),
+// what kinds of shop it has, and Seoul's official 상권; the model's 7 inputs fold under it
+const BUSY_BY_DAY = 1.5, BUSY_BY_NIGHT = 0.8;      // weekday day ÷ night crowd (Seoul's middle area: about 0.86)
+const WEEKEND_MORE = 1.15, WEEKEND_FEWER = 0.85;   // weekend ÷ weekday afternoon crowd (Seoul's middle area: about 1.08)
+
+function areaSummary(dong) {
+  const info = dong.info, sentences = [];
+  const dayNight = info.day_night_ratio;
+  if (isKnown(dayNight)) {
+    if (dayNight >= BUSY_BY_DAY) sentences.push(t("summaryByDay", dayNight.toFixed(1)));
+    else if (dayNight <= BUSY_BY_NIGHT) sentences.push(t("summaryByNight", (1 / dayNight).toFixed(1)));
+    else sentences.push(t("summaryMixed"));
+  }
+  const weekend = info.weekend_weekday_ratio;
+  if (isKnown(weekend)) {
+    if (weekend >= WEEKEND_MORE) sentences.push(t("summaryWeekendMore", Math.round((weekend - 1) * 100)));
+    else if (weekend <= WEEKEND_FEWER) sentences.push(t("summaryWeekendFewer", Math.round((1 - weekend) * 100)));
+    else sentences.push(t("summaryWeekendSame"));
+  }
+  const mix = info.shop_mix ?? [];
+  const total = mix.reduce((sum, n) => sum + n, 0);
+  if (total > 0) {
+    const [first, second] = mix.map((n, group) => ({ n, group })).sort((a, b) => b.n - a.n);
+    const share = (n) => Math.round((n / total) * 100);
+    sentences.push(t("summaryShops", formatNumber(total), groupName(state.meta.groups[first.group]), share(first.n),
+      groupName(state.meta.groups[second.group]), share(second.n)));
+  }
+  if (isKnown(info.n_districts)) sentences.push(t("summaryDistricts", Math.round(info.n_districts)));
+  const percent = (share) => (isKnown(share) ? `${(share * 100).toFixed(1)}%` : "–");
+  const inputs = [
+    t("crowdNumber", formatNumber(dong.kpi.lp_wd_day)),
+    `${formatNumber(dong.kpi.res_pop)}${t("people")}`,
+    isKnown(weekend) ? t("timesNumber", weekend.toFixed(2)) : "–",
+    percent(info.res_share_0_14), percent(info.res_share_65p), percent(info.long_foreign_share), percent(info.temp_foreign_share),
+  ].map((value, index) => `<tr><td>${escapeHtml(t("inputLabels")[index])}</td><td>${value}</td></tr>`);
+  return `<section class="area-summary">
+      <p class="eyebrow">${t("summaryTitle")}</p>
+      <p class="summary-text">${sentences.join(" ")}</p>
+      <details class="summary-inputs"><summary>${t("inputsTitle")}</summary>
+        <table class="figures">${inputs.join("")}</table>
+        <p class="fine-print">${t("inputsNote")}</p></details>
+    </section>`;
+}
+
+// One key number: what it is, the number, a note under it, and (the shops tile only, D81) a word for how it compares
 function keyNumber(label, value, compare = "", chip = "") {
   return `<div class="kn"><p class="kn-label">${escapeHtml(label)}</p><p class="kn-value">${value}</p>`
     + `${compare ? `<p class="kn-compare">${compare}</p>` : ""}${chip}</div>`;
 }
 
-// A word in vermilion: what Seoul Scout points at (fewer shops than similar areas)
+// A word in pink: what Seoul Scout points at (fewer shops than its crowd would usually mean)
 function brandChip(label) {
   return `<span class="status status-brand"><span class="status-icon" aria-hidden="true">↓</span>${escapeHtml(label)}</span>`;
 }
 
-// Higher or lower than Seoul's usual, as a chip; `higherIsBetter` null means neither is better (a plain word)
-function compareChip(value, reference, higherIsBetter, words) {
-  if (!isKnown(value) || !isKnown(reference)) return "";
-  const verdict = judge(value, reference, higherIsBetter ?? true);
-  const above = value > reference;
-  const word = verdict === "neutral" ? words.same : above ? words.higher : words.lower;
-  return statusChip(higherIsBetter === null ? "neutral" : verdict, word);
-}
-
-// Low / middle / high third of Seoul's areas as a chip
-function bandChip(kpi, value, { lowIs = "neutral", highIs = "neutral", words = "bandWords" } = {}) {
-  if (!isKnown(value)) return "";
-  const level = band(seoulValues(kpi), value);
-  const status = level === "low" ? lowIs : level === "high" ? highIs : "neutral";
-  return statusChip(status, t(words)[level]);
-}
-
-// The sentence above the numbers: does this area have fewer of the trade than similar areas?
+// The sentence above the numbers: does this area have fewer of the trade than its crowd would usually mean? (D81: said with its own numbers)
 function tradeVerdict(dong) {
   const trade = state.trade, name = tradeName(trade);
   const values = dong.trades[trade] ?? {};
@@ -1638,8 +1760,12 @@ function tradeVerdict(dong) {
     candidate ? statusChip("good", t("candidateTag")) : "",
     candidate?.sales_per_shop === "high" ? `<span class="badge">★ ${t("strongBadge")}</span>` : "",
   ].filter(Boolean).join(" ");
+  // D81: the lead explained with the area's own numbers, not "similar areas"
+  const reason = expected === null ? ""
+    : `<p class="verdict-reason">${t("verdictReason", formatNumber(dong.kpi.lp_wd_day), formatNumber(dong.kpi.res_pop), name, shops, expected)}</p>`;
   return `<section class="verdict">
       <h3 class="verdict-headline">${headline}</h3>
+      ${reason}
       ${tags ? `<p class="box-tag">${tags}</p>` : ""}
       ${values.signal ? signalDetails(values.signal) : ""}
     </section>`;
@@ -1648,7 +1774,6 @@ function tradeVerdict(dong) {
 function tradeKeyNumbers(dong) {
   const trade = state.trade, name = tradeName(trade);
   const values = dong.trades[trade] ?? {};
-  const { sales: salesMedian, close: closeMedian } = state.medians[trade];
   const shops = values.shops ?? 0;
   const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
   let shopsChip = "";
@@ -1657,8 +1782,6 @@ function tradeKeyNumbers(dong) {
     else if (values.resid >= 1) shopsChip = statusChip("neutral", t("moreVerdict", Math.max(1, shops - expected)));
     else shopsChip = statusChip("neutral", t("sameVerdict"));
   }
-  const ratio = isKnown(values.sales_per_shop) && salesMedian ? values.sales_per_shop / salesMedian : null;
-  const salesWords = { higher: ratio ? t("salesTimes", ratio.toFixed(1)) : "", lower: t("lowerThanUsual"), same: t("sameAsUsual") };
   const enoughMix = values.time && values.age && shops >= MIN_MIX_SHOPS;
   const busiest = enoughMix ? values.time.indexOf(Math.max(...values.time)) : -1;
   const topAge = enoughMix ? values.age.indexOf(Math.max(...values.age)) : -1;
@@ -1666,11 +1789,9 @@ function tradeKeyNumbers(dong) {
   return [
     keyNumber(t("knShops", name), t("shopsNumber", shops), expected === null ? "" : t("knShopsCompare", expected), shopsChip),
     keyNumber(t("knSales"), isKnown(values.sales_per_shop) ? formatWon(values.sales_per_shop) : "–",
-      isKnown(values.sales_per_shop) ? t("knSeoulCompare", name, isKnown(salesMedian) ? formatWon(salesMedian) : "–") : t("cellNoData"),
-      compareChip(values.sales_per_shop, salesMedian, true, salesWords)),
+      isKnown(values.sales_per_shop) ? "" : t("cellNoData")),
     keyNumber(t("knClose"), isKnown(values.close_rate) ? `${values.close_rate.toFixed(1)}%` : "–",
-      isKnown(values.close_rate) ? t("knSeoulCompare", name, isKnown(closeMedian) ? `${closeMedian.toFixed(1)}%` : "–") : t("cellNoData"),
-      compareChip(values.close_rate, closeMedian, false, { higher: t("moreThanUsual"), lower: t("fewerThanUsual"), same: t("sameAsUsual") })),
+      isKnown(values.close_rate) ? "" : t("cellNoData")),
     keyNumber(t("cellBusiest"), busiest < 0 ? "–" : t("timeBands")[busiest],
       busiest < 0 ? t("cellNoData") : t("shareNumber", percent(values.time[busiest]))),
     keyNumber(t("knBuyers"), topAge < 0 ? "–" : t("buyerAges")[topAge],
@@ -1680,40 +1801,20 @@ function tradeKeyNumbers(dong) {
   ];
 }
 
-// Without a trade: the area itself
-function placeKeyNumbers(dong) {
-  const months = dong.kpi.months_open_avg, vacancy = dong.kpi.vacancy_small_shop;
-  const far = dong.info.rent_area_km > RENT_FAR_KM;
-  return [
-    crowdKeyNumber(dong),
-    keyNumber(t("knResidents"), `${formatNumber(dong.kpi.res_pop)}${t("people")}`, rankText("res_pop", dong.kpi.res_pop)),
-    closeAllKeyNumber(dong),
-    keyNumber(t("knMonths"), t("yearsMonths", Math.floor(months / 12), Math.round(months % 12)), t("knMonthsNote")),
-    rentKeyNumber(dong),
-    keyNumber(t("knVacancy"), far || !isKnown(vacancy) ? "–" : t("healthNumber", Math.round(vacancy)),
-      far ? t("knRentFar") : t("knVacancyNote")),
-  ];
-}
-
-// All shops of the area: how many of every 100 closed in a year, against Seoul's usual area
+// All shops of the area: how many of every 100 closed in a year
 function closeAllKeyNumber(dong) {
-  const close = dong.kpi.close_rate_total, typicalClose = median(seoulValues("close_rate_total"));
-  return keyNumber(t("knCloseAll"), t("healthNumber", Math.round(close)), t("knSeoulAreaCompare", t("healthNumber", Math.round(typicalClose))),
-    compareChip(close, typicalClose, false, { higher: t("moreThanUsual"), lower: t("fewerThanUsual"), same: t("sameAsUsual") }));
+  return keyNumber(t("knCloseAll"), t("healthNumber", Math.round(dong.kpi.close_rate_total)));
 }
 
 function crowdKeyNumber(dong) {
-  const crowd = dong.kpi.lp_wd_day;
-  return keyNumber(t("knCrowd"), t("crowdNumber", formatNumber(crowd)), rankText("lp_wd_day", crowd),
-    bandChip("lp_wd_day", crowd, { lowIs: "neutral", highIs: "neutral" }));
+  return keyNumber(t("knCrowd"), t("crowdNumber", formatNumber(dong.kpi.lp_wd_day)));
 }
 
 // Rent as a founder counts it: what a 10-pyeong (33 ㎡) shop pays a month
 function rentKeyNumber(dong) {
   const rent = dong.kpi.rent_small_shop;
   if (dong.info.rent_area_km > RENT_FAR_KM || !isKnown(rent)) return keyNumber(t("knRent"), "–", t("knRentFar"));
-  return keyNumber(t("knRent"), t("knRentValue", formatWon(rent * 1000 * 33)), t("rentNumber", rent),   // rent: 천원 per ㎡ a month
-    bandChip("rent_small_shop", rent, { lowIs: "good", highIs: "risk", words: "bandWordsRent" }));
+  return keyNumber(t("knRent"), t("knRentValue", formatWon(rent * 1000 * 33)), t("rentNumber", rent));   // rent: 천원 per ㎡ a month
 }
 
 // The two basic charts: when the trade sells (with a trade) and when people are around
@@ -1804,7 +1905,7 @@ function trendSentence(values) {
   return `<p class="sentence">${t("shopsChange", before, values.shops ?? 0, signed(values.shops_change))}${sales}</p>`;
 }
 
-// Share of the trade's sales in each of the source's six time bands: ink bars, the busiest band in vermilion (D75)
+// Share of the trade's sales in each of the source's six time bands: ink bars, the busiest band in pink (D75)
 function salesTimeChart(shares, busiest) {
   const rows = shares.map((share, index) => ({
     label: t("timeBands")[index], value: share, text: `${Math.round(share * 100)}%`,
@@ -1948,7 +2049,7 @@ function renderLayerControl() {
     </div>` : "";
   box.innerHTML = `
     <button type="button" class="layer-button" id="layer-toggle" aria-haspopup="menu" aria-expanded="${box.classList.contains("open")}">
-      <span class="layer-icon" aria-hidden="true">${LAYERS_ICON}</span><span>${t("layerButton")}: <b>${escapeHtml(state.wishlist ? t("wishlistLegend") : layer.label())}</b></span></button>
+      <span class="layer-icon" aria-hidden="true">${LAYERS_ICON}</span><span>${t("layerButton")}: <b>${escapeHtml(state.wishlist ? t("wishlistLegend") : layer.label())}</b></span><span class="layer-chevron" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg></span></button>
     <div class="layer-menu" role="menu">${options.join("")}</div>${legend}${time}${shopLegendHtml()}`;
   box.querySelector("#layer-toggle").addEventListener("click", () => {
     box.classList.toggle("open");
@@ -2090,6 +2191,9 @@ function bindSheet() {
     chip.addEventListener("click", () => openLead(chip.dataset.pickTrade, state.selected));
   }
   on("toggle-leads", () => { state.allLeads = !state.allLeads; renderSheet({ keepScroll: true }); });
+  on("story-toggle", toggleStory);
+  on("story-prev", () => goToStoryStep(story.step - 1));
+  on("story-next", () => goToStoryStep(story.step + 1));
   on("start-tour", beginTour);
   on("show-overview", () => setLayer("suggested"));
   on("hide-overview", () => setLayer("none"));
@@ -2138,7 +2242,7 @@ function openLead(trade, dong) {
 }
 
 // ---------------------------------------------------------------------------
-// Find by wishlist (wishlist.js): tick conditions, see the neighborhoods meeting all of them in orange
+// Find by wishlist (wishlist.js): tick conditions, see the neighborhoods meeting all of them in pink
 // ---------------------------------------------------------------------------
 function openWishlist() {
   state.wishlist = [];
@@ -2417,19 +2521,19 @@ function similarSection(dong) {
 
 // ---------------------------------------------------------------------------
 // Simulation (simulation.js): "what if I open my shop here?"
-// An orange pin marks the shop; the 5-minute walk around it is drawn, competitors inside get a red ring, and the
+// A pink pin marks the shop; the 5-minute walk around it is drawn, competitors inside get a red ring, and the
 // neighborhood's gap tint can be shown before and after the shop opens. Tap the map or drag the pin to move it.
 // ---------------------------------------------------------------------------
 function addSimulationLayers() {
   const map = state.map;
   map.addSource("sim-area", { type: "geojson", data: EMPTY });
-  // the 5-minute walk: a thin ink dash, no fill, so "내 가게" is the only vermilion on the map (round 5: a vermilion
+  // the 5-minute walk: a thin ink dash, no fill, so "내 가게" is the only pink on the map (round 5: a pink
   // ring and wash with the rivals' rings read as one pink-red texture). Dash lengths are in line widths: 4 px on, 4 off.
   map.addLayer({ id: "sim-area-line", type: "line", source: "sim-area",
     paint: { "line-color": COLORS.ink, "line-width": 1.5, "line-dasharray": [2.67, 2.67] } }, OUTLINE_BEFORE);
   map.addSource("sim-rivals", { type: "geojson", data: EMPTY });
   map.addLayer({ id: "sim-rivals-ring", type: "circle", source: "sim-rivals",
-    // a small raspberry dot under each rival's marker: where a crowded street hides the marker, the dot still counts it
+    // a small red dot under each rival's marker (risk: inside the walk): where a crowded street hides the marker, the dot still counts it
     // (an empty ring per building piled up into a tangle, round 2)
     paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 15, 3, 18, 4.5], "circle-color": COLORS.risk,
              "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } }, DOTS_BEFORE);
@@ -2613,7 +2717,7 @@ function simCompetitionSection(competition, name) {
     </section>`;
 }
 
-// Where the neighborhood sits on the gap scale, before (hollow) and after (orange) the new shop
+// Where the neighborhood sits on the gap scale, before (hollow) and after (pink) the new shop
 function gapMeter(gap) {
   const lowest = -3, highest = 3;
   const position = (score) => ((Math.min(highest, Math.max(lowest, score)) - lowest) / (highest - lowest)) * 100;
@@ -2645,7 +2749,7 @@ function simSalesSection(sales, name) {
     </section>`;
 }
 
-// The sales range (green: money coming in), the likeliest point (orange: your shop) and the Seoul median (gray)
+// The sales range (green: money coming in), the likeliest point (pink: your shop) and the Seoul median (gray)
 function salesBar(sales, seoul) {
   const top = Math.max(sales.high, seoul) * 1.15;
   const at = (value) => (value / top) * 100;
@@ -2672,7 +2776,7 @@ function simSurvivalSection(survival) {
     </section>`;
 }
 
-// Two lines over 0-5 years: this spot (orange, your shop) and the Seoul median of the trade (gray, dashed).
+// Two lines over 0-5 years: this spot (pink, your shop) and the Seoul median of the trade (gray, dashed).
 // The lines stretch with the panel; every label is HTML, so text keeps its size (D69).
 function survivalChart(survival) {
   const x = (year) => (year / SURVIVAL_YEARS) * 100;   // % of the plot's width
@@ -2886,7 +2990,7 @@ function writeLink() {
   }
   if (state.selected) params.set("dong", state.selected.code);
   if (state.extraKinds.length) params.set("also", state.extraKinds.map((kind) => state.meta.subtypes[kind]).join(","));
-  if (getLanguage() !== "ko") params.set("lang", getLanguage());
+  if (getLanguage() !== "en") params.set("lang", getLanguage());
   history.replaceState(null, "", params.toString() ? `#${params}` : location.pathname);
 }
 
@@ -2913,10 +3017,6 @@ function band(values, value) {
   const known = values.filter(isKnown).sort((a, b) => a - b);
   const low = known[Math.floor(known.length / 3)], high = known[Math.floor((2 * known.length) / 3)];
   return value <= low ? "low" : value >= high ? "high" : "mid";
-}
-
-function seoulValues(kpi) {
-  return state.data.dongs.map((d) => d.kpi[kpi]);
 }
 
 function isKnown(value) {

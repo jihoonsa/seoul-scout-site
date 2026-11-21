@@ -61,6 +61,20 @@ function setFolded(folded) {
   notifyChange();
 }
 
+// The left column (search, trade, map view) folds the same way, into one button (D83)
+function isLeftFolded() {
+  return document.querySelector(".app").classList.contains("left-folded");
+}
+
+function setLeftFolded(folded) {
+  document.querySelector(".app").classList.toggle("left-folded", folded);
+  renderPanelLabels();
+}
+
+export function showLeftColumn() {
+  if (isLeftFolded()) setLeftFolded(false);
+}
+
 export function showPanel() {
   if (isFolded()) setFolded(false);
 }
@@ -72,6 +86,11 @@ export function renderPanelLabels() {
   fold.setAttribute("aria-label", folded ? t("panelShow") : t("panelHide"));
   fold.setAttribute("aria-expanded", String(!folded));
   document.getElementById("panel-handle").setAttribute("aria-label", t("panelResize"));
+  const leftFold = document.getElementById("left-fold");
+  const leftFolded = isLeftFolded();
+  leftFold.textContent = leftFolded ? t("leftShow") : "‹";
+  leftFold.setAttribute("aria-label", leftFolded ? t("leftShow") : t("leftHide"));
+  leftFold.setAttribute("aria-expanded", String(!leftFolded));
 }
 
 function bindHandle(handle) {
@@ -108,6 +127,7 @@ export function initPanel(onChange) {
   chosen = readStoredFraction();
   bindHandle(document.getElementById("panel-handle"));
   document.getElementById("panel-fold").addEventListener("click", () => setFolded(!isFolded()));
+  document.getElementById("left-fold").addEventListener("click", () => setLeftFolded(!isLeftFolded()));
   window.addEventListener("resize", applyWidth);
   renderPanelLabels();
   applyWidth();

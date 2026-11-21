@@ -78,8 +78,8 @@ export function judge(value, reference, higherIsBetter) {
 
 function judgeGap(residAfter) {
   if (residAfter === null || residAfter === undefined) return "unknown";
-  if (residAfter <= -1) return "good";       // still clearly fewer than similar neighborhoods
-  if (residAfter >= 1) return "risk";        // more than similar neighborhoods
+  if (residAfter <= -1) return "good";       // still clearly fewer than its crowd would usually mean
+  if (residAfter >= 1) return "risk";        // more than its crowd would usually mean
   return "neutral";
 }
 

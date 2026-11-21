@@ -93,7 +93,7 @@ export class StoreDots {
     this.map.addLayer({
       id: "shop-outside", type: "circle", source: LABEL_SOURCE, minzoom: LABELS_MIN_ZOOM, layout: { visibility: "none" },
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 15, 2.5, 18, 3.5], "circle-color": "#ffffff",
-               "circle-stroke-color": COLORS.risk, "circle-stroke-width": 1.5, "circle-stroke-opacity": 0.7 },
+               "circle-stroke-color": COLORS.brand, "circle-stroke-width": 1.5, "circle-stroke-opacity": 0.7 },
     }, beforeId);
   }
 
