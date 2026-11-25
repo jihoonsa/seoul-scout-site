@@ -1,4 +1,4 @@
-// Shop markers on the map: the chosen trade's shops in a white circle with a pink ring and icon (D83: pink is the chosen
+// Shop markers on the map: the chosen trade's shops in a white circle with a green ring and icon (D94: green is the chosen
 // trade, red is risk only), the extra kinds ("같이 볼 가게") in a white circle with a black ring. The legend uses the same SVG.
 // White discs, as DESIGN.md says: a street of filled discs crowded out "내 가게" (round 3).
 // D80: every other shop is a filled disc in its type's colour with a white icon, so a street reads by type at a glance.
@@ -6,15 +6,15 @@
 import { COLORS } from "./colors.js";
 import { ICON_KEYS, iconShapes } from "./icons.js";
 
-// One colour per SEMAS map group (store_meta.json "groups"). Kept away from pink (our suggestions and the chosen trade)
+// One colour per SEMAS map group (store_meta.json "groups"). Kept away from green (our suggestions and the chosen trade)
 // and red (risk); the type's name always comes with it (filter chips, legend, building card).
 export const GROUP_COLORS = {
   cafe: "#8b5a2b",        // brown
   food: "#f08c00",        // amber
   retail: "#1c7ed6",      // blue
   education: "#5f3dc4",   // violet
-  beauty: "#ae3ec9",      // purple (not pink: that is the chosen trade)
-  health: "#2b8a3e",      // green
+  beauty: "#ae3ec9",      // purple
+  health: "#3b5bdb",      // indigo (not green: that is the chosen trade, D94; white icon 5.7:1)
   lodging: "#0c8599",     // teal
   other: "#868e96",       // gray
 };

@@ -9,7 +9,7 @@
 
 import { COLORS, GAP_STYLE, STATUS, SUGGESTED_STYLE, gapStyle, hexToRgba, underWhite } from "./colors.js";
 import { DOTS_MIN_ZOOM, LABELS_MIN_ZOOM, StoreDots } from "./store-dots.js";
-import { DOTS_BEFORE, OUTLINE_BEFORE, TINT_BEFORE, WATER_HATCH, baseStyle, labelTexts, waterHatchImage } from "./map-style.js";
+import { DOTS_BEFORE, OUTLINE_BEFORE, PARK_DOTS, TINT_BEFORE, WATER_HATCH, baseStyle, labelTexts, parkDotsImage, waterHatchImage } from "./map-style.js";
 import {
   SURVIVAL_YEARS, TYPICAL_AREA_M2, WALK_RADIUS_M, circlePolygon, gapSpreadByTrade, simulateOpening,
 } from "./simulation.js";
@@ -70,23 +70,33 @@ const LAYERS_ICON = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none"
   + `<path d="M9 2.5 16 6.25 9 10 2 6.25Z"/><path d="M2 9.75 9 13.5l7-3.75"/></svg>`;
 
 // Map views: what the neighborhoods are tinted by. Tints sit under the roads and labels, so the map stays readable.
-// Colors follow colors.js: pink = gaps and suggestions, blue = people, green = sales, red = risk, violet = cost.
+// D94: every view tints in the one brand green, and darker is always better for a founder: lowerIsBetter flips
+// the scale for closures, shops per visitor and rent. Each label says what darker means.
 // D80: "none" comes first and is the opening view, so nothing is chosen or coloured until the founder asks for it.
 const LAYERS = {
   none: { label: () => t("layerNone") },
   suggested: { label: () => t("layerSuggested"), withoutTrade: true },
   tradeGap: { label: () => t("layerTradeGap", tradeName(state.trade)), needsTrade: true, diverging: true,
               value: (dong) => dong.trades[state.trade]?.resid ?? null },
-  crowd: { label: () => t("layerCrowd"), color: COLORS.people, value: (dong) => dong.hourly[state.dayType][state.hour], timed: true },
-  tradeSales: { label: () => t("layerTradeSales", tradeName(state.trade)), color: COLORS.good, needsTrade: true,
+  crowd: { label: () => directed(t("layerCrowd"), "more"), color: COLORS.brand,
+           value: (dong) => dong.hourly[state.dayType][state.hour], timed: true },
+  tradeSales: { label: () => directed(t("layerTradeSales", tradeName(state.trade)), "higher"), color: COLORS.brand, needsTrade: true,
                 value: (dong) => dong.trades[state.trade]?.sales_per_shop ?? null },
-  close: { label: () => t("layerClose"), color: COLORS.risk, value: (dong) => dong.kpi.close_rate_total },
-  competition: { label: () => t("layerCompetition"), color: COLORS.risk, value: (dong) => dong.kpi.stores_per_1k_wd_day },
-  rent: { label: () => t("layerRent"), color: COLORS.cost,
+  close: { label: () => directed(t("layerClose"), "fewer"), color: COLORS.brand, lowerIsBetter: true,
+           value: (dong) => dong.kpi.close_rate_total },
+  competition: { label: () => directed(t("layerCompetition"), "fewer"), color: COLORS.brand, lowerIsBetter: true,
+                 value: (dong) => dong.kpi.stores_per_1k_wd_day },
+  rent: { label: () => directed(t("layerRent"), "cheaper"), color: COLORS.brand, lowerIsBetter: true,
           value: (dong) => (dong.info.rent_area_km > RENT_FAR_KM ? null : dong.kpi.rent_small_shop) },
-  customers: { label: () => t("layerCustomers"), color: COLORS.people, customersOnly: true, value: customerValue },
+  customers: { label: () => directed(t("layerCustomers"), "more"), color: COLORS.brand, customersOnly: true, value: customerValue },
 };
 const OPACITY_STEPS = [0.1, 0.25, 0.4, 0.55, 0.72];             // 5 quantile classes, light to strong (D80: wider apart)
+const MIN_HEADLINE_WIDTH = 260;                                   // narrower than this, the map headline docks (desktop)
+
+// "Rent" -> "Rent (darker = cheaper)"
+function directed(label, word) {
+  return `${label} ${t("darker")[word]}`;
+}
 
 const state = {
   map: null, data: null, meta: null, dots: null,
@@ -179,6 +189,8 @@ function prepareReferences() {
       weekend: median(dongs.map((d) => d.trades[trade]?.weekend)),
     };
   }
+  // rent near a survey point only: a far one says nothing about the area (RENT_FAR_KM)
+  state.middleRent = median(dongs.filter((d) => d.info.rent_area_km <= RENT_FAR_KM).map((d) => d.kpi.rent_small_shop));
   state.gapSpread = gapSpreadByTrade(dongs, trades);
   state.wishRefs = wishlistReferences(dongs);
   state.overview = summarizeSuggestions();
@@ -241,8 +253,10 @@ async function createMap() {
   state.map.keyboard.disableRotation();
   state.map.addControl(new maplibregl.ScaleControl({ maxWidth: 96 }), "bottom-right");   // the atlas's scale bar (D75)
   state.map.on("error", (event) => console.warn("map:", event.error?.message ?? event));
-  state.map.on("styleimagemissing", ({ id }) => {   // the water's hatch (also after a language switch rebuilds the style)
-    if (id === WATER_HATCH && !state.map.hasImage(id)) state.map.addImage(id, waterHatchImage(), { pixelRatio: 2 });
+  state.map.on("styleimagemissing", ({ id }) => {   // the water's hatch and the parks' dots (also after a language switch rebuilds the style)
+    if (state.map.hasImage(id)) return;
+    if (id === WATER_HATCH) state.map.addImage(id, waterHatchImage(), { pixelRatio: 2 });
+    if (id === PARK_DOTS) state.map.addImage(id, parkDotsImage(), { pixelRatio: 2 });
   });
   return new Promise((resolve) => state.map.once("load", resolve));
 }
@@ -271,13 +285,21 @@ function mapPadding() {
   const wide = window.innerWidth > NARROW_WIDTH;
   const card = document.getElementById("top-card").getBoundingClientRect();
   const sheet = document.getElementById("sheet").getBoundingClientRect();
-  const padding = wide ? { top: 40, right: sheet.width + 40, bottom: 80, left: card.width + 40 }
-                       : { top: card.height + 24, right: 24, bottom: phoneSheetRestHeight() + 24, left: 24 };
+  const top = Math.max(wide ? 40 : card.height + 24, headlineBottom() + 16);   // below the map headline (D103)
+  const padding = wide ? { top, right: sheet.width + 40, bottom: 80, left: card.width + 40 }
+                       : { top, right: 24, bottom: phoneSheetRestHeight() + 24, left: 24 };
   // Never leave less than 120 px of map: MapLibre refuses to fit into nothing
   const { clientWidth: width, clientHeight: height } = state.map.getContainer();
   const shrink = (a, b, size) => Math.min(1, (size - 120) / (padding[a] + padding[b]));
   const vertical = shrink("top", "bottom", height), horizontal = shrink("left", "right", width);
   return { top: padding.top * vertical, bottom: padding.bottom * vertical, left: padding.left * horizontal, right: padding.right * horizontal };
+}
+
+// Where the map headline ends over the map; 0 when it is hidden or docked in the left column (the left padding covers it)
+function headlineBottom() {
+  const box = document.getElementById("map-headline");
+  if (box.hidden || box.classList.contains("docked")) return 0;
+  return box.getBoundingClientRect().bottom - state.map.getContainer().getBoundingClientRect().top;
 }
 
 // The phone sheet's height once it settles at its stop: it slides between stops, so measuring it mid-slide
@@ -330,7 +352,7 @@ function drawNeighborhoods() {
   map.addLayer({ id: "seoul-border", type: "line", source: "outside-seoul",
     paint: { "line-color": COLORS.ink, "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.2, 14, 2.2] } }, OUTLINE_BEFORE);
 
-  // Suggested neighborhoods (and wishlist matches) get a pink outline; the selected one a dark ink outline
+  // Suggested neighborhoods (and wishlist matches) get a green outline; the selected one a dark ink outline
   const highlighted = ["boolean", ["feature-state", "highlighted"], false];
   // Close in, the tint thins (half by zoom 14, under a third at street level), so the streets and buildings stay readable
   const tint = ["coalesce", ["feature-state", "opacity"], 0];
@@ -399,7 +421,7 @@ function isCandidate(dong) {
   return Boolean(state.trade) && dong.trade_candidates.some((c) => c.trade === state.trade);
 }
 
-// Pink outline: wishlist matches while the wishlist is open, else the suggestions of the chosen trade (or of all trades)
+// Green outline: wishlist matches while the wishlist is open, else the suggestions of the chosen trade (or of all trades)
 function isHighlighted(dong) {
   if (state.wishlist) return state.wishMatches.has(dong.code);
   if (state.trade) return isCandidate(dong);
@@ -420,10 +442,10 @@ function tintOf(dong) {
     const { color, opacity } = gapStyle(simulatedGap(dong) ?? value);
     return { color, opacity };
   }
-  return { color: layer.color, opacity: OPACITY_STEPS[quantileClass(value, state.breaks)] };
+  return { color: layer.color, opacity: OPACITY_STEPS[classOf(layer, value)] };
 }
 
-// Opening view: a light pink where a trade has a gap, stronger where gaps passed the checks (suggested)
+// Opening view: a light green where a trade has a gap, stronger where gaps passed the checks (suggested)
 function suggestedTint(dong) {
   const summary = state.overview.byDong.get(dong.code);
   if (!summary) return NO_TINT;
@@ -465,6 +487,17 @@ function quantileClass(value, breaks) {
   return position === -1 ? breaks.length : position;
 }
 
+// 0 (lightest) to 4 (darkest): 4 is always the best for a founder, so low closures, competition and rent are dark (D94)
+function classOf(layer, value) {
+  const position = quantileClass(value, state.breaks);
+  return layer.lowerIsBetter ? OPACITY_STEPS.length - 1 - position : position;
+}
+
+// The words under a ramp's light and dark ends
+function legendWords(layer) {
+  return layer.lowerIsBetter ? [t("bandHigh"), t("bandLow")] : [t("bandLow"), t("bandHigh")];
+}
+
 // Name pins: the suggested neighborhoods of the chosen trade, or (opening view) those with a strongest lead (★).
 // The most important come first: they win when pins overlap (declutterPins).
 function pinnedDongs() {
@@ -502,7 +535,7 @@ function pinRank(n) {
   return String(n).padStart(2, "0");
 }
 
-// A pin: the pink dot sits on the neighborhood's centre, the rank and the name to its right (D75)
+// A pin: the green dot sits on the neighborhood's centre, the rank and the name to its right (D75)
 function drawPins() {
   for (const pin of state.pins) pin.remove();
   state.pins = [];
@@ -875,8 +908,20 @@ function renderDotControls() {
 // Phones fit the map view card between the top card and the shop controls (style.css): note where the top card ends
 function watchTopCard() {
   const app = document.querySelector(".app"), topCard = document.getElementById("top-card");
-  new ResizeObserver(() => app.style.setProperty("--top-card-bottom", `${topCard.getBoundingClientRect().bottom}px`))
-    .observe(topCard);
+  const headline = document.getElementById("map-headline");
+  const note = () => {
+    const bottom = topCard.getBoundingClientRect().bottom;
+    app.style.setProperty("--top-card-bottom", `${bottom}px`);
+    // phones: the map view card also stops under the map headline, which sits under the top card (D95)
+    const below = headline.hidden ? 0 : headline.getBoundingClientRect().bottom;
+    app.style.setProperty("--map-top-bottom", `${Math.max(bottom, below)}px`);
+  };
+  const watch = new ResizeObserver(note);
+  watch.observe(topCard);
+  watch.observe(headline);
+  // desktop: the map headline sits between the left column and the panel, which both change width (folds, the handle)
+  const room = new ResizeObserver(placeMapHeadline);
+  for (const id of ["top-card", "left-fold", "panel"]) room.observe(document.getElementById(id));
 }
 
 function noteFiltersHeight(filters) {
@@ -1059,12 +1104,9 @@ function renderTradeStep() {
   const box = document.getElementById("trade-step");
   const trades = Object.keys(state.meta.trade_subtypes);   // founder_trades.csv order: most common trades first
   if (state.trade) {
-    const count = state.data.dongs.filter(isCandidate).length;
     box.innerHTML = `<div class="chosen">
         <p class="chosen-trade">${tradeIcon(state.trade)}${escapeHtml(tradeName(state.trade))}</p>
-        <button type="button" class="text-button" id="change-trade">${t("change")}</button></div>
-      <p class="map-count" aria-label="${escapeHtml(t("candidatesCount", count))}">
-        <b aria-hidden="true">${pinRank(count)}</b><span aria-hidden="true">${t("mapCountLabel")}</span></p>`;
+        <button type="button" class="text-button" id="change-trade">${t("change")}</button></div>`;
     box.querySelector("#change-trade").addEventListener("click", () => chooseTrade(""));
     return;
   }
@@ -1115,6 +1157,7 @@ function renderSheet({ keepScroll = false } = {}) {
   if (!keepScroll) document.getElementById("sheet").scrollTop = 0;
   if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
   updateSheetTall();
+  renderMapHeadline();   // its third line is the chosen area's standing
 }
 
 // When the panel reaches the bottom of the screen, the zoom buttons move left of it (a folded panel reaches nowhere)
@@ -1145,13 +1188,14 @@ function startStepsHtml() {
 }
 
 function startView() {
-  return `<h2 class="sheet-title">${t("startTitle")}</h2>
+  return `<p class="eyebrow">${t("startTitle")}</p>
+    <h2 class="sheet-title">${t("startFinding", state.overview.gapDongs, state.data.dongs.length)}</h2>
     <p class="sheet-lead">${t("startLead")}</p>
     ${startStepsHtml()}
     <div class="actions"><button type="button" class="primary-button" id="start-tour">${t("startTour")}</button></div>
     ${referenceNote()}
     <section class="box start-more">
-      <h3 class="box-headline">${t("startMoreTitle")}</h3>
+      <p class="box-headline">${t("startMoreTitle")}</p>
       <div class="start-links">
         <button type="button" class="secondary-button" id="show-overview">${t("startOverview")}</button>
         <button type="button" class="secondary-button" id="open-wishlist">${t("wishlistButton")}</button>
@@ -1169,12 +1213,12 @@ function overviewView() {
     ${referenceNote()}
     <p class="sheet-lead">${t("overviewIntro")}</p>
     <section class="box">
-      <h3 class="box-headline">${t("tradeBarsTitle")}</h3>
+      <h3 class="box-headline">${t("tradeBarsTitle", tradeName(mostWorthALook().trade), mostWorthALook().total)}</h3>
       ${tradeBars()}
       <p class="fine-print">${t("tradeBarsNote")}</p>
     </section>
     <section class="box">
-      <h3 class="box-headline">${t("leadsTitle")}</h3>
+      <h3 class="box-headline">${t("leadsTitle", overview.strongDongs)}</h3>
       ${leadList()}
     </section>
     <details class="more"><summary>${t("overviewMethod")}</summary>
@@ -1193,7 +1237,7 @@ function insightSentence() {
   return t("homeInsight", Object.keys(state.meta.trade_subtypes).length, roomTrades);
 }
 
-// Gaps -> suggestions -> strongest leads, as three shrinking pink bars (one hue, darker = stronger)
+// Gaps -> suggestions -> strongest leads, as three shrinking green bars (one hue, darker = stronger)
 function funnelChart(overview) {
   // counted in neighborhoods (곳), like the welcome and the map; the trade count (건) follows in the small line
   const rows = [
@@ -1207,13 +1251,22 @@ function funnelChart(overview) {
   return `<ol class="funnel" aria-label="${t("funnelTitle")}">${items.join("")}</ol>`;
 }
 
-// Suggested neighborhoods per trade: one pink bar each (★ part darker), with what a gap means for the trade
-function tradeBars() {
-  const trades = Object.keys(state.meta.trade_subtypes);
-  const counts = trades.map((trade) => {
+// Per trade: how many areas are worth a look, and how many of those also sell well (★)
+function tradeCounts() {
+  return Object.keys(state.meta.trade_subtypes).map((trade) => {
     const here = state.overview.candidates.filter(({ candidate }) => candidate.trade === trade);
     return { trade, total: here.length, strong: here.filter(({ candidate }) => candidate.sales_per_shop === "high").length };
   });
+}
+
+// The first trade with the most areas worth a look: the bars' headline and the hint's example
+function mostWorthALook() {
+  return tradeCounts().reduce((best, count) => (count.total > best.total ? count : best));
+}
+
+// Suggested neighborhoods per trade: one green bar each (★ part darker), with what a gap means for the trade
+function tradeBars() {
+  const counts = tradeCounts();
   const most = Math.max(...counts.map((c) => c.total));
   const rows = counts.map(({ trade, total, strong }) => {
     const pattern = state.data.trade_patterns.find((p) => p.trade === trade).pattern;
@@ -1225,7 +1278,7 @@ function tradeBars() {
         ${statusChip(patternStatus(pattern), t("patternShort")[pattern])}
       </button></li>`;
   });
-  const longest = counts.find((c) => c.total === most);   // the hint's example: the first longest bar
+  const longest = mostWorthALook();
   return `<ul class="trade-bars">${rows.join("")}</ul>
     ${chartHint(t("hintTradeBars", tradeName(longest.trade), longest.total, longest.strong))}`;
 }
@@ -1299,6 +1352,8 @@ function helpView() {
   return `<h2 class="sheet-title">${t("helpButton")}</h2>
     <section class="section"><h2 class="section-title">${t("howToTitle")}</h2>${startStepsHtml()}</section>
     <div class="actions tour-replay-row"><button type="button" class="primary-button" id="tour-replay">${t("helpTour")}</button></div>
+    <section class="section" id="reading-guide"><h2 class="section-title">${t("guideTitle")}</h2>
+      <ol class="about-points">${t("guideLines").map((line) => `<li>${line}</li>`).join("")}</ol></section>
     <section class="section"><h2 class="section-title">${t("colorKeyTitle")}</h2><ul class="color-key">${colors.join("")}</ul></section>
     <section class="section"><h2 class="section-title">${t("aboutTitle")}</h2><ul class="about-points">${about}</ul>
       <p class="fine-print">${t("sources")}</p></section>`;
@@ -1467,7 +1522,7 @@ function evidenceBox() {
 function tourTargets(step) {
   const rectOf = (element) => element?.getBoundingClientRect();
   if (step === 2) return [rectOf(document.getElementById("trade-step"))];
-  if (step === 3) return [rectOf(document.getElementById("trade-step")), rectOf(document.getElementById("layer-control"))];
+  if (step === 3) return [rectOf(document.getElementById("map-headline")), rectOf(document.getElementById("trade-step"))];
   if (step === 4) {
     // the docked panel ends at the window's edge: when a resize pushes the box past it, bring it back so its ring shows
     const box = evidenceBox(), rect = rectOf(box);
@@ -1504,7 +1559,6 @@ function beginTour() {
 
 function goToTourStep(step) {
   tour.step = step;
-  document.getElementById("layer-control").classList.toggle("tour-legend", step === 3);   // phones fold the legend away
   if (step === 1) {
     closeTour();
     openHelp("welcome");
@@ -1525,7 +1579,6 @@ function goToTourStep(step) {
 // Every way out of the tour ends here. With nothing saved (the welcome closed on a first visit) it does nothing.
 async function endTour() {
   closeTour();
-  document.getElementById("layer-control").classList.remove("tour-legend");
   const saved = tour.saved;
   tour.saved = null;                 // first: a second call while this one waits must not restore twice
   tour.step = 0;
@@ -1556,7 +1609,7 @@ function tradeView() {
       ${candidate.sales_per_shop === "high" ? `<span class="badge">★ ${t("strongBadge")}</span>` : ""}
     </button>`);
   const { sales: salesMedian, close: closeMedian } = state.medians[state.trade];
-  return `<h2 class="sheet-title">${t("tradeTitle", name)}</h2>
+  return `<h2 class="sheet-title">${t("tradeTitle", name, candidates.length)}</h2>
     ${referenceNote()}
     <p class="callout callout-${pattern.pattern}">${statusChip(patternStatus(pattern.pattern), t("patternShort")[pattern.pattern])} ${t("patterns")[pattern.pattern]}</p>
     <div class="place-list">${cards.join("") || `<p class="muted">${t("noCandidates")}</p>`}</div>
@@ -1570,21 +1623,19 @@ function tradeView() {
     <p class="fine-print">${t("candidateExplain")} ${t("simHintTrade", name)}</p>`;
 }
 
-// D80: a report a shop owner reads in one look. First one sentence and the key numbers (D81: only the shops tile
-// says what it is compared with; the others show the area's own number); then only the two basic charts (sales by time, people by hour); everything
-// else (the checks, notes, every figure) is folded under "자세히 보기".
+// D80, D95: a report a shop owner reads in one look. The finding first, then 5 key numbers, each with what it is
+// compared with; the story; only the two basic charts (sales by time, people by hour); everything else (the area in
+// words, the checks, notes, every figure) is folded under "자세히 보기".
 function dongView(dong) {
   if (!state.trade) return pickTradeView(dong);
   return `
-    ${sheetHeader(dong)}
-    ${referenceNote()}
-    ${areaSummary(dong)}
-    ${storySection(dong)}
+    ${sheetHeader(dong, { dataLine: true })}
     ${tradeVerdict(dong)}
     <section class="key-numbers" aria-label="${escapeHtml(t("readoutTitle"))}">
       <p class="eyebrow">${t("readoutTitle")}</p>
       <div class="kn-grid">${tradeKeyNumbers(dong).join("")}</div>
     </section>
+    ${storySection(dong)}
     ${basicCharts(dong)}
     <div class="actions"><button type="button" class="primary-button" id="simulate-dong">${t("simulateHere", tradeName(state.trade))}</button></div>
     <div class="actions">
@@ -1594,13 +1645,15 @@ function dongView(dong) {
     ${moreDetails(dong)}`;
 }
 
-function sheetHeader(dong) {
+// The report's header also says how old its data is, with the "for reference" note (D95: one line, not a box)
+function sheetHeader(dong, { dataLine = false } = {}) {
   const kicker = [state.trade ? tradeName(state.trade) : "", guName(dong)].filter(Boolean).map(escapeHtml).join(" / ");
   const romanized = getLanguage() === "ko" ? `<span class="sheet-romanized">${escapeHtml(dong.dong_en)}</span>` : "";
   return `<div class="sheet-header">
       <button type="button" class="icon-button" id="sheet-back" aria-label="${t("back")}">‹</button>
       <div class="sheet-heading"><p class="kicker">${kicker}</p><h2 class="sheet-title report-title">${escapeHtml(placeName(dong))}</h2>
-        <p class="sheet-subtitle">${romanized}${escapeHtml(typeName(dong.type))} · ${escapeHtml(zoneName(dong.zone))}</p></div>
+        <p class="sheet-subtitle">${romanized}${escapeHtml(typeName(dong.type))} · ${escapeHtml(zoneName(dong.zone))}</p>
+        ${dataLine ? `<p class="data-line">${t("dataLine")}</p>` : ""}</div>
     </div>`;
 }
 
@@ -1620,7 +1673,7 @@ function pickTradeView(dong) {
     <p class="pick-trade-lead">${t("pickTradeLead")}</p>
     ${suggestedTradesSection(dong)}
     <section class="box">
-      <h3 class="box-headline">${shown.size ? t("pickTradeOthers") : t("pickTradeAll")}</h3>
+      <h3 class="box-headline">${shown.size ? t("pickTradeOthers", others.length) : t("pickTradeAll", others.length)}</h3>
       <div class="chip-wrap">${others.join("")}</div>
     </section>
     <div class="actions">${addCompareButton(dong)}</div>`;
@@ -1638,18 +1691,50 @@ function readStoryOn() {
   try { return localStorage.getItem(STORY_KEY) !== "off"; } catch { return true; }   // storage blocked: on
 }
 
-// Each step: the map layer it shows and its sentence, from this area's own numbers; steps without data are left out
+// The story's arc (spec 5.5, Lesson 25): context, conflict, evidence, then the ask and its caveat. Each step: the map
+// layer it shows, a headline that states the finding, and one note; steps without data are left out.
 function storySteps(dong) {
   const values = dong.trades[state.trade] ?? {}, name = tradeName(state.trade);
-  const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
-  const steps = [{ layer: "tradeGap", text: expected === null ? t("storyShopsOnly", name, values.shops ?? 0)
-    : t("storyShops", name, values.shops ?? 0, expected) }];
-  steps.push({ layer: "crowd", text: t("storyCrowd", formatNumber(dong.hourly.weekday[STORY_HOUR])) });
-  if (isKnown(values.sales_per_shop)) steps.push({ layer: "tradeSales", text: t("storySales", name, formatWon(values.sales_per_shop)) });
-  steps.push({ layer: "close", text: t("storyClose", Math.round(dong.kpi.close_rate_total)) });
+  const steps = [];
+  const [who, when] = summarySentences(dong);
+  if (who && when) steps.push({ layer: "tradeGap", headline: who, note: when });
+  const verdict = verdictHeadline(dong);
+  steps.push({ layer: "tradeGap", headline: verdict.headline, note: verdict.reason || t("storyNoUsual") });
+  const crowd = dong.hourly.weekday[STORY_HOUR];
+  if (Number.isFinite(crowd)) {
+    const all = state.data.dongs.map((d) => d.hourly.weekday[STORY_HOUR]).filter(Number.isFinite);
+    steps.push({ layer: "crowd", headline: t("storyCrowdHead", formatNumber(roundForStory(crowd))),
+                 note: t("storyNote", tenthsText(crowd, all, false, "crowd")) });
+  }
+  const sales = values.sales_per_shop;
+  if (isKnown(sales)) {
+    steps.push({ layer: "tradeSales", headline: t("storySalesHead", name, formatWon(roundForStory(sales)), salesChangeText(values.sales_change)),
+                 note: t("storyNote", vsUsual(sales, state.medians[state.trade].sales) || t("cellNoData")) });
+  }
+  const close = dong.kpi.close_rate_total;
+  if (Number.isFinite(close)) {
+    const all = state.data.dongs.map((d) => d.kpi.close_rate_total).filter(Number.isFinite);
+    steps.push({ layer: "close", headline: close > 0 ? t("storyCloseHead", oneIn(close)) : t("storyCloseNone"),
+                 note: t("storyNote", tenthsText(close, all, true, "close")) });
+  }
   const rent = dong.kpi.rent_small_shop;
-  if (dong.info.rent_area_km <= RENT_FAR_KM && isKnown(rent)) steps.push({ layer: "rent", text: t("storyRent", formatWon(rent * 1000 * 33)) });
+  if (dong.info.rent_area_km <= RENT_FAR_KM && isKnown(rent)) {
+    steps.push({ layer: "rent", headline: t("storyRentHead", formatWon(roundForStory(rent * 1000 * 33))),
+                 note: t("storyNote", vsUsual(rent, state.middleRent) || t("cellNoData")) });
+  }
+  const pattern = state.data.trade_patterns.find((p) => p.trade === state.trade)?.pattern;
+  const caveat = t("storyCaveat")[pattern] ?? t("storyCaveat").unclear;
+  steps.push({ layer: "tradeGap", headline: t("storyAsk", placeName(dong), weekdayPeakHour(dong.hourly), name), note: caveat(name) });
   return steps;
+}
+
+// The weekday's busiest opening hour, for the ask's "around {hour}"
+function weekdayPeakHour(hourly) {
+  let best = BUSINESS_HOURS[0];
+  for (let hour = BUSINESS_HOURS[0]; hour <= BUSINESS_HOURS[1]; hour++) {
+    if (hourly.weekday[hour] > hourly.weekday[best]) best = hour;
+  }
+  return best;
 }
 
 function storySection(dong) {
@@ -1663,10 +1748,13 @@ function storySection(dong) {
     return `<div class="story-off"><button type="button" class="secondary-button" id="story-toggle">${t("storyOn")}</button></div>`;
   }
   const steps = storySteps(dong), step = Math.min(story.step, steps.length - 1);
+  const dots = steps.map((_, index) => `<span${index === step ? ' aria-current="step"' : ""}></span>`).join("");
   return `<section class="story" aria-label="${escapeHtml(t("storyTitle"))}">
-      <div class="story-head"><p class="eyebrow">${t("storyTitle")} <span class="story-count">${step + 1} / ${steps.length}</span></p>
+      <div class="story-head"><p class="eyebrow">${t("storyTitle")}</p>
+        <span class="story-dots" role="img" aria-label="${t("storyDot", step + 1, steps.length)}">${dots}</span>
         <button type="button" class="text-button" id="story-toggle">${t("storyOff")}</button></div>
-      <p class="story-text">${steps[step].text}</p>
+      <p class="story-headline">${escapeHtml(steps[step].headline)}</p>
+      <p class="story-note">${escapeHtml(steps[step].note)}</p>
       <div class="story-nav">
         <button type="button" class="secondary-button" id="story-prev" ${step === 0 ? "disabled" : ""}>‹ ${t("storyPrev")}</button>
         <button type="button" class="primary-button" id="story-next" ${step === steps.length - 1 ? "disabled" : ""}>${t("storyNext")} ›</button>
@@ -1696,7 +1784,7 @@ function toggleStory() {
 const BUSY_BY_DAY = 1.5, BUSY_BY_NIGHT = 0.8;      // weekday day ÷ night crowd (Seoul's middle area: about 0.86)
 const WEEKEND_MORE = 1.15, WEEKEND_FEWER = 0.85;   // weekend ÷ weekday afternoon crowd (Seoul's middle area: about 1.08)
 
-function areaSummary(dong) {
+function summarySentences(dong) {
   const info = dong.info, sentences = [];
   const dayNight = info.day_night_ratio;
   if (isKnown(dayNight)) {
@@ -1719,6 +1807,11 @@ function areaSummary(dong) {
       groupName(state.meta.groups[second.group]), share(second.n)));
   }
   if (isKnown(info.n_districts)) sentences.push(t("summaryDistricts", Math.round(info.n_districts)));
+  return sentences;
+}
+
+function areaSummary(dong) {
+  const info = dong.info, sentences = summarySentences(dong), weekend = info.weekend_weekday_ratio;
   const percent = (share) => (isKnown(share) ? `${(share * 100).toFixed(1)}%` : "–");
   const inputs = [
     t("crowdNumber", formatNumber(dong.kpi.lp_wd_day)),
@@ -1735,37 +1828,76 @@ function areaSummary(dong) {
     </section>`;
 }
 
-// One key number: what it is, the number, a note under it, and (the shops tile only, D81) a word for how it compares
-function keyNumber(label, value, compare = "", chip = "") {
-  return `<div class="kn"><p class="kn-label">${escapeHtml(label)}</p><p class="kn-value">${value}</p>`
+// One key number: what it is, the number, what it is compared with, and a chip only when it stands out (D95)
+function keyNumber(label, value, compare = "", chip = "", main = false) {
+  return `<div class="kn${main ? " kn-main" : ""}"><p class="kn-label">${escapeHtml(label)}</p><p class="kn-value">${value}</p>`
     + `${compare ? `<p class="kn-compare">${compare}</p>` : ""}${chip}</div>`;
 }
 
-// A word in pink: what Seoul Scout points at (fewer shops than its crowd would usually mean)
+// The best fifth of Seoul's areas is good, the worst fifth risk; everything between gets no chip (D95: exceptions only)
+function tileStatus(value, values, lowerIsBetter) {
+  if (!Number.isFinite(value)) return null;
+  if (betterThanTenths(value, values, lowerIsBetter) >= 8) return "good";
+  if (betterThanTenths(value, values, !lowerIsBetter) >= 8) return "risk";
+  return null;
+}
+
+function tileChip(value, values, lowerIsBetter) {
+  const status = tileStatus(value, values, lowerIsBetter);
+  return status ? statusChip(status) : "";
+}
+
+// "about 1 in 8": a closure rate in % as one shop in k; null when nothing closed or there is no rate
+function oneIn(rate) {
+  return Number.isFinite(rate) && rate > 0 ? Math.round(100 / rate) : null;
+}
+
+// Seoul's usual value is the middle of its areas; null when it is unknown or 0
+function vsUsual(value, usual) {
+  return Number.isFinite(value) && usual > 0 ? t("vsSeoulUsual", value / usual) : "";
+}
+
+const joinCompare = (...parts) => parts.filter(Boolean).join(" · ");
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+
+// "+3% on a year ago", or "same as a year ago" when it rounds to 0; "" when unknown
+function salesChangeText(change) {
+  if (!isKnown(change)) return "";
+  const rounded = Math.round(change);
+  return rounded === 0 ? t("sameYearAgo") : t("salesChangeShort", signed(rounded));
+}
+
+// A word in green: what Seoul Scout points at (fewer shops than its crowd would usually mean)
 function brandChip(label) {
   return `<span class="status status-brand"><span class="status-icon" aria-hidden="true">↓</span>${escapeHtml(label)}</span>`;
 }
 
 // The sentence above the numbers: does this area have fewer of the trade than its crowd would usually mean? (D81: said with its own numbers)
-function tradeVerdict(dong) {
-  const trade = state.trade, name = tradeName(trade);
-  const values = dong.trades[trade] ?? {};
-  const candidate = dong.trade_candidates.find((c) => c.trade === trade);
+function verdictHeadline(dong) {
+  const name = tradeName(state.trade);
+  const values = dong.trades[state.trade] ?? {};
   const shops = values.shops ?? 0;
   const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
   let headline = t("headShopsSimilar", name);
   if (expected !== null && values.resid <= -1) headline = t("verdictFewer", name, Math.max(1, expected - shops));
   else if (expected !== null && values.resid >= 1) headline = t("verdictMore", name, Math.max(1, shops - expected));
+  // D81: the lead explained with the area's own numbers, not "similar areas"
+  const reason = expected === null ? ""
+    : t("verdictReason", formatNumber(dong.kpi.lp_wd_day), formatNumber(dong.kpi.res_pop), name, shops, expected);
+  return { headline, reason };
+}
+
+function tradeVerdict(dong) {
+  const values = dong.trades[state.trade] ?? {};
+  const candidate = dong.trade_candidates.find((c) => c.trade === state.trade);
+  const { headline, reason } = verdictHeadline(dong);
   const tags = [
     candidate ? statusChip("good", t("candidateTag")) : "",
     candidate?.sales_per_shop === "high" ? `<span class="badge">★ ${t("strongBadge")}</span>` : "",
   ].filter(Boolean).join(" ");
-  // D81: the lead explained with the area's own numbers, not "similar areas"
-  const reason = expected === null ? ""
-    : `<p class="verdict-reason">${t("verdictReason", formatNumber(dong.kpi.lp_wd_day), formatNumber(dong.kpi.res_pop), name, shops, expected)}</p>`;
   return `<section class="verdict">
       <h3 class="verdict-headline">${headline}</h3>
-      ${reason}
+      ${reason ? `<p class="verdict-reason">${reason}</p>` : ""}
       ${tags ? `<p class="box-tag">${tags}</p>` : ""}
       ${values.signal ? signalDetails(values.signal) : ""}
     </section>`;
@@ -1776,26 +1908,24 @@ function tradeKeyNumbers(dong) {
   const values = dong.trades[trade] ?? {};
   const shops = values.shops ?? 0;
   const expected = isKnown(values.expected) ? Math.round(values.expected) : null;
-  let shopsChip = "";
-  if (expected !== null) {
-    if (values.resid <= -1) shopsChip = brandChip(t("fewerVerdict", Math.max(1, expected - shops)));
-    else if (values.resid >= 1) shopsChip = statusChip("neutral", t("moreVerdict", Math.max(1, shops - expected)));
-    else shopsChip = statusChip("neutral", t("sameVerdict"));
-  }
-  const enoughMix = values.time && values.age && shops >= MIN_MIX_SHOPS;
-  const busiest = enoughMix ? values.time.indexOf(Math.max(...values.time)) : -1;
-  const topAge = enoughMix ? values.age.indexOf(Math.max(...values.age)) : -1;
-  const percent = (share) => Math.round(share * 100);
+  const usual = state.medians[trade];
+  const ofTrade = (key) => state.data.dongs.map((d) => d.trades[trade]?.[key]).filter(Number.isFinite);
+  // the main tile: the shops against the usual for the crowd, and a year's change; green only when there are fewer
+  const shopsCompare = joinCompare(expected === null ? "" : t("knShopsCompare", expected),
+    !isKnown(values.shops_change) ? "" : values.shops_change === 0 ? t("sameYearAgo") : t("knShopsChange", signed(values.shops_change)))
+    || t("cellNoData");
+  const shopsChip = expected !== null && values.resid <= -1 ? brandChip(t("fewerVerdict", Math.max(1, expected - shops))) : "";
+  const sales = values.sales_per_shop, close = values.close_rate;
+  const salesCompare = isKnown(sales)
+    ? joinCompare(salesChangeText(values.sales_change), vsUsual(sales, usual.sales))
+    : t("cellNoData");
+  const closeCompare = isKnown(close)
+    ? joinCompare(close > 0 ? t("oneInYear", oneIn(close)) : t("noneClosed"), close > 0 ? vsUsual(close, usual.close) : "")
+    : t("cellNoData");
   return [
-    keyNumber(t("knShops", name), t("shopsNumber", shops), expected === null ? "" : t("knShopsCompare", expected), shopsChip),
-    keyNumber(t("knSales"), isKnown(values.sales_per_shop) ? formatWon(values.sales_per_shop) : "–",
-      isKnown(values.sales_per_shop) ? "" : t("cellNoData")),
-    keyNumber(t("knClose"), isKnown(values.close_rate) ? `${values.close_rate.toFixed(1)}%` : "–",
-      isKnown(values.close_rate) ? "" : t("cellNoData")),
-    keyNumber(t("cellBusiest"), busiest < 0 ? "–" : t("timeBands")[busiest],
-      busiest < 0 ? t("cellNoData") : t("shareNumber", percent(values.time[busiest]))),
-    keyNumber(t("knBuyers"), topAge < 0 ? "–" : t("buyerAges")[topAge],
-      topAge < 0 ? t("cellNoData") : t("knBuyersCompare", percent(values.age[topAge]), percent(values.female ?? 0))),
+    keyNumber(t("knShops", name), t("shopsNumber", shops), shopsCompare, shopsChip, true),
+    keyNumber(t("knSales"), isKnown(sales) ? formatWon(sales) : "–", salesCompare, tileChip(sales, ofTrade("sales_per_shop"), false)),
+    keyNumber(t("knClose"), isKnown(close) ? `${close.toFixed(1)}%` : "–", closeCompare, tileChip(close, ofTrade("close_rate"), true)),
     crowdKeyNumber(dong),
     rentKeyNumber(dong),
   ];
@@ -1807,14 +1937,19 @@ function closeAllKeyNumber(dong) {
 }
 
 function crowdKeyNumber(dong) {
-  return keyNumber(t("knCrowd"), t("crowdNumber", formatNumber(dong.kpi.lp_wd_day)));
+  const crowd = dong.kpi.lp_wd_day;
+  const all = state.data.dongs.map((d) => d.kpi.lp_wd_day).filter(Number.isFinite);
+  return keyNumber(t("knCrowd"), t("crowdNumber", formatNumber(crowd)),
+    Number.isFinite(crowd) ? tenthsText(crowd, all, false, "crowd") : t("cellNoData"), tileChip(crowd, all, false));
 }
 
-// Rent as a founder counts it: what a 10-pyeong (33 ㎡) shop pays a month
+// Rent as a founder counts it: what a 10-pyeong (33 ㎡) shop pays a month, against Seoul's middle area
 function rentKeyNumber(dong) {
   const rent = dong.kpi.rent_small_shop;
   if (dong.info.rent_area_km > RENT_FAR_KM || !isKnown(rent)) return keyNumber(t("knRent"), "–", t("knRentFar"));
-  return keyNumber(t("knRent"), t("knRentValue", formatWon(rent * 1000 * 33)), t("rentNumber", rent));   // rent: 천원 per ㎡ a month
+  const near = state.data.dongs.filter((d) => d.info.rent_area_km <= RENT_FAR_KM).map((d) => d.kpi.rent_small_shop).filter(Number.isFinite);
+  return keyNumber(t("knRent"), t("knRentValue", formatWon(rent * 1000 * 33)),   // rent: 천원 per ㎡ a month
+    joinCompare(t("rentNumber", rent), vsUsual(rent, state.middleRent)), tileChip(rent, near, true));
 }
 
 // The two basic charts: when the trade sells (with a trade) and when people are around
@@ -1824,14 +1959,14 @@ function basicCharts(dong) {
   if (values?.time && (values.shops ?? 0) >= MIN_MIX_SHOPS) {
     const busiest = values.time.indexOf(Math.max(...values.time));
     parts.push(box({
-      headline: t("headBusiest", t("timeBands")[busiest]),
+      headline: t("headBusiest", tradeName(state.trade), t("timeBands")[busiest], Math.round(values.time[busiest] * 100)),
       picture: salesTimeChart(values.time, busiest),
       hint: t("hintSalesTime", t("timeBands")[busiest], Math.round(values.time[busiest] * 100)),
     }));
   }
   const peak = peakOf(dong.hourly);
   parts.push(box({
-    headline: t("chartPeopleTitle", peak.hour, t(peak.dayType)),
+    headline: t("chartPeopleTitle", peak.hour, t("mhDay")[peak.dayType], formatNumber(roundForStory(peak.value))),
     picture: `${hourlyChart(dong.hourly)}
       <p class="chart-caption"><span class="key weekday"></span>${t("weekday")} <span class="key weekend"></span>${t("weekend")}</p>`,
     hint: t("hintHourly", t(peak.dayType), peak.hour, formatNumber(peak.value)),
@@ -1845,6 +1980,10 @@ function moreDetails(dong) {
   if (state.trade) {
     const values = dong.trades[state.trade] ?? {};
     const { ticket: ticketMedian, weekend: weekendMedian } = state.medians[state.trade];
+    if (values.age && (values.shops ?? 0) >= MIN_MIX_SHOPS) {
+      const topAge = values.age.indexOf(Math.max(...values.age)), percent = (share) => Math.round(share * 100);
+      lines.push(`<p class="sentence">${t("buyersSentence", t("buyerAges")[topAge], percent(values.age[topAge]), percent(values.female ?? 0))}</p>`);
+    }
     const pattern = state.data.trade_patterns.find((p) => p.trade === state.trade).pattern;
     lines.push(`<p class="sentence">${t("patterns")[pattern]}</p>`);
     if (isKnown(values.franchise)) lines.push(`<p class="sentence">${t("franchise", Math.round(values.franchise * 100))}</p>`);
@@ -1872,7 +2011,7 @@ function moreDetails(dong) {
     return `<tr><td>${escapeHtml(t("kpiLabels")[key])}</td><td>${value === null ? "–" : value.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td><td>${rankText(key, value)}</td></tr>`;
   });
   return `<details class="more"><summary>${t("moreDetails")}</summary>
-      <div class="more-body">${lines.join("")}</div>
+      <div class="more-body">${state.trade ? areaSummary(dong) : ""}${lines.join("")}</div>
       <p class="subhead">${t("sectionMore")}</p><table class="figures">${rows.join("")}</table>
     </details>`;
 }
@@ -1888,9 +2027,9 @@ function suggestedTradesSection(dong) {
   if (!suggested.length && !gapOnly.length) return "";
   const gapChips = gapOnly.length ? `<div class="chip-wrap">${gapOnly.join("")}</div>` : "";
   return box({
-    headline: suggested.length ? t("dongSuggestedTitle") : t("dongGapsTitle"),
+    headline: suggested.length ? t("dongSuggestedTitle", suggested.length, placeName(dong)) : t("dongGapsTitle", gapOnly.length),
     picture: suggested.length
-      ? `<div class="chip-wrap">${suggested.join("")}</div>${gapOnly.length ? `<p class="subhead">${t("dongGapsTitle")}</p>${gapChips}` : ""}`
+      ? `<div class="chip-wrap">${suggested.join("")}</div>${gapOnly.length ? `<p class="subhead">${t("dongGapsTitle", gapOnly.length)}</p>${gapChips}` : ""}`
       : gapChips,
     notes: `<p class="fine-print">${t("dongSuggestedNote")}</p>`,
   });
@@ -1898,14 +2037,13 @@ function suggestedTradesSection(dong) {
 
 function trendSentence(values) {
   if (values.shops_change === null || values.shops_change === undefined) return "";
-  const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
   const before = (values.shops ?? 0) - values.shops_change;
   const sales = values.sales_change === null || values.sales_change === undefined ? ""
     : t("salesChange", signed(Math.round(values.sales_change)), Math.abs(values.sales_change) > BIG_SALES_CHANGE);
   return `<p class="sentence">${t("shopsChange", before, values.shops ?? 0, signed(values.shops_change))}${sales}</p>`;
 }
 
-// Share of the trade's sales in each of the source's six time bands: ink bars, the busiest band in pink (D75)
+// Share of the trade's sales in each of the source's six time bands: ink bars, the busiest band in green (D94)
 function salesTimeChart(shares, busiest) {
   const rows = shares.map((share, index) => ({
     label: t("timeBands")[index], value: share, text: `${Math.round(share * 100)}%`,
@@ -2010,31 +2148,6 @@ function renderLayerControl() {
     : !l.customersOnly && (!l.needsTrade || state.trade) && (!l.withoutTrade || !state.trade));
   const options = Object.entries(LAYERS).filter(available).map(([key, l]) =>
     `<button type="button" role="menuitemradio" aria-checked="${key === state.layer}" class="menu-item${key === state.layer ? " on" : ""}" data-layer="${key}">${escapeHtml(l.label())}</button>`);
-  let legend = "";
-  if (state.wishlist) {
-    legend = legendHtml({ title: t("legendWishTitle"), colors: [SUGGESTED_STYLE.one.wash] });
-  } else if (state.layer === "suggested") {
-    legend = legendHtml({
-      title: t("legendSuggestedTitle"),
-      colors: [SUGGESTED_STYLE.gapOnly, SUGGESTED_STYLE.one, SUGGESTED_STYLE.several].map((style) => style.wash),
-      words: t("suggestedLegend"),
-      extra: pinKeyHtml(),
-    });
-  } else if (layer.diverging) {
-    legend = legendHtml({
-      title: t("legendGapTitle", tradeName(state.trade)),
-      colors: GAP_STYLE.map((s) => s.wash),
-      words: t("legendGapWords"),
-      extra: state.sim ? "" : pinKeyHtml(),
-    });
-  } else if (layer.value) {
-    legend = legendHtml({
-      title: t("legendRampTitle", layer.label()),
-      colors: OPACITY_STEPS.map((opacity) => hexToRgba(layer.color, opacity)),   // the same 5 classes the map draws
-      words: [t("bandLow"), t("bandHigh")],
-      extra: state.customers?.narrow.length ? `<p class="legend-extra">${t("legendCustomersExtra")}</p>` : "",
-    });
-  }
   const time = layer.timed ? `
     <div class="time-control">
       <div class="segmented" role="group">
@@ -2050,7 +2163,7 @@ function renderLayerControl() {
   box.innerHTML = `
     <button type="button" class="layer-button" id="layer-toggle" aria-haspopup="menu" aria-expanded="${box.classList.contains("open")}">
       <span class="layer-icon" aria-hidden="true">${LAYERS_ICON}</span><span>${t("layerButton")}: <b>${escapeHtml(state.wishlist ? t("wishlistLegend") : layer.label())}</b></span><span class="layer-chevron" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg></span></button>
-    <div class="layer-menu" role="menu">${options.join("")}</div>${legend}${time}${shopLegendHtml()}`;
+    <div class="layer-menu" role="menu">${options.join("")}</div>${time}${shopLegendHtml()}`;
   box.querySelector("#layer-toggle").addEventListener("click", () => {
     box.classList.toggle("open");
     box.querySelector("#layer-toggle").setAttribute("aria-expanded", box.classList.contains("open"));
@@ -2065,16 +2178,157 @@ function renderLayerControl() {
     state.hour = Number(event.target.value);
     restyleAll();
     box.querySelector(".hour-label").textContent = t("hourLabel", state.hour);
+    renderMapHeadline();
   });
   box.querySelector("#play")?.addEventListener("click", togglePlay);
+  renderMapHeadline();
 }
 
-// The legend: what the colour means as a sentence, the colours the map draws, and a few words under them (D69)
-function legendHtml({ title, colors, words = [], extra = "" }) {
-  const bar = colors.map((color) => `<span style="background:${color}"></span>`).join("");
-  const under = words.map((word) => `<span>${escapeHtml(word)}</span>`).join("");
-  return `<div class="legend"><p class="legend-title">${title}</p><div class="legend-bar">${bar}</div>
-    <div class="legend-words">${under}</div>${extra}</div>`;
+// ---------------------------------------------------------------------------
+// The map headline (D95): line 1 the finding, line 2 how to read the colour, line 3 where the chosen area stands
+// ---------------------------------------------------------------------------
+function renderMapHeadline() {
+  const box = document.getElementById("map-headline");
+  const content = state.data ? mapHeadlineContent() : null;
+  box.hidden = !content;
+  if (!content) return;
+  const { finding, key, colors, words = [], here = -1, standing = "", note = "" } = content;
+  const bar = colors.map((color, index) => `<span${index === here ? ' class="here"' : ""} style="background:${color}"></span>`).join("");
+  const open = Boolean(state.headlineOpen);   // phones: the finding only, until ⌄ opens the rest
+  box.classList.toggle("open", open);
+  box.setAttribute("aria-live", state.playing ? "off" : "polite");   // the playing hour would be read out every step
+  const html = `<div class="mh-top"><p class="mh-finding">${escapeHtml(finding)}</p>
+      <button type="button" id="mh-more" class="mh-more" aria-expanded="${open}" aria-label="${t("mhMore")}">⌄</button></div>
+    <div class="mh-rest">
+      <div class="mh-read"><p class="mh-key">${escapeHtml(key)}</p><div class="legend-bar">${bar}</div>
+        <div class="legend-words">${words.map((word) => `<span>${escapeHtml(word)}</span>`).join("")}</div>
+        <button type="button" id="mh-guide" class="text-button">${t("mhGuide")}</button></div>
+      ${standing ? `<p class="mh-standing">${escapeHtml(standing)}</p>` : ""}${note}</div>`;
+  if (html !== state.headlineHtml) {   // a live region: rewriting the same words would read them out again
+    state.headlineHtml = html;
+    box.innerHTML = html;
+    box.querySelector("#mh-more").addEventListener("click", toggleMapHeadline);
+    box.querySelector("#mh-guide").addEventListener("click", openReadingGuide);
+  }
+  placeMapHeadline();
+}
+
+function toggleMapHeadline() {
+  state.headlineOpen = !state.headlineOpen;
+  renderMapHeadline();
+  document.getElementById("mh-more").focus();   // the button was redrawn: keep the keyboard where it was
+}
+
+// What the headline says for the current view, or null when the map shows no colour
+function mapHeadlineContent() {
+  if (state.wishlist) {
+    if (!state.wishlist.length) return null;
+    return { finding: t("mhWishlist", state.wishMatches.size), key: t("mhKeyWish"), colors: [SUGGESTED_STYLE.one.wash] };
+  }
+  const layer = LAYERS[state.layer];
+  if (state.layer === "none") return null;
+  if (state.layer === "suggested") {
+    const count = state.data.dongs.filter((dong) => state.overview.byDong.get(dong.code)?.suggested.length).length;
+    return { finding: t("mhSuggested", count), key: t("mhKey", t("mhKeys").suggested), words: t("suggestedLegend"),
+             colors: [SUGGESTED_STYLE.gapOnly, SUGGESTED_STYLE.one, SUGGESTED_STYLE.several].map((style) => style.wash), note: pinKeyHtml() };
+  }
+  if (layer.diverging) return gapHeadline();
+  const best = bestAreas(state.layer);
+  if (!best.length) return null;   // the customer map before anything is chosen
+  const context = { day: t("mhDay")[state.dayType], hour: state.hour, trade: tradeName(state.trade),
+                    count: state.data.dongs.filter((dong) => layer.value(dong) !== null).length };
+  const value = state.selected ? layer.value(state.selected) : null;
+  const shown = value !== null && value !== undefined && state.breaks;
+  return {
+    finding: t("mhFindings")[state.layer](t("mhList", best.map(placeName)), context),
+    key: t("mhKey", t("mhKeys")[state.layer]),
+    colors: OPACITY_STEPS.map((opacity) => hexToRgba(layer.color, opacity)),   // the same 5 classes the map draws
+    words: legendWords(layer),
+    here: shown ? classOf(layer, value) : -1,
+    standing: shown ? t("mhStanding", placeName(state.selected), standingText(state.layer, state.selected)) : "",
+    note: state.customers?.narrow.length ? `<p class="mh-note">${t("legendCustomersExtra")}</p>` : "",
+  };
+}
+
+function gapHeadline() {
+  const resid = (dong) => dong.trades[state.trade]?.resid ?? null;
+  const far = state.data.dongs.filter((dong) => resid(dong) !== null && resid(dong) <= GAP_STYLE[0].upTo).length;
+  const worth = state.data.dongs.filter(isCandidate).length;
+  const chosen = state.selected && resid(state.selected) !== null ? simulatedGap(state.selected) ?? resid(state.selected) : null;
+  const here = chosen === null ? -1 : GAP_STYLE.indexOf(gapStyle(chosen));
+  return {
+    finding: t("mhGap", tradeName(state.trade), far, worth),
+    key: t("mhKey", t("mhKeys").tradeGap),
+    colors: GAP_STYLE.map((style) => style.wash),
+    words: t("legendGapWords"),
+    here,
+    standing: here === -1 ? "" : t("mhStanding", placeName(state.selected), t("mhGapLevels")[here]),
+    note: state.sim ? "" : pinKeyHtml(),
+  };
+}
+
+// The areas with the best value for a view, best first; areas without a value are left out
+function bestAreas(layerKey, count = 3) {
+  const layer = LAYERS[layerKey];
+  const direction = layer.lowerIsBetter ? 1 : -1;
+  return state.data.dongs
+    .map((dong) => ({ dong, value: layer.value(dong) }))
+    .filter(({ value }) => Number.isFinite(value))
+    .sort((a, b) => direction * (a.value - b.value))
+    .slice(0, count)
+    .map(({ dong }) => dong);
+}
+
+// How many tenths of Seoul's areas this value beats (0 to 10), for "busier than 8 in 10 areas"
+function betterThanTenths(value, values, lowerIsBetter) {
+  const beaten = values.filter((other) => (lowerIsBetter ? other > value : other < value)).length;
+  return Math.floor((10 * beaten) / values.length);
+}
+
+// "busier than 8 in 10 areas", or the other way round ("quieter than 7 in 10 areas") when that says more; "" with no data
+function standingText(layerKey, dong) {
+  const layer = LAYERS[layerKey];
+  const value = layer.value(dong);
+  if (!Number.isFinite(value)) return "";
+  return tenthsText(value, state.data.dongs.map(layer.value).filter(Number.isFinite), layer.lowerIsBetter, layerKey);
+}
+
+function tenthsText(value, values, lowerIsBetter, key) {
+  const better = betterThanTenths(value, values, lowerIsBetter);
+  const worse = betterThanTenths(value, values, !lowerIsBetter);
+  return better >= worse ? t("mhTenths", better, t("mhBetter")[key]) : t("mhTenths", worse, t("mhWorse")[key]);
+}
+
+// Desktop: over the map's free area, between the left column and the panel, never over either; with too little
+// room there, docked under the search card and folded like on phones. Phones: style.css.
+function placeMapHeadline() {
+  const box = document.getElementById("map-headline");
+  const dock = (docked) => {
+    box.classList.toggle("docked", docked);
+    const topCard = document.getElementById("top-card"), column = document.querySelector(".left-column");
+    if (docked && box.previousElementSibling !== topCard) topCard.after(box);
+    if (!docked && box.nextElementSibling !== column) column.before(box);   // its place in index.html
+  };
+  if (window.innerWidth <= NARROW_WIDTH) {
+    dock(false);
+    box.style.left = box.style.right = "";
+    return;
+  }
+  const edge = (id, side) => {
+    const rect = document.getElementById(id).getBoundingClientRect();
+    return rect.width ? rect[side] : null;
+  };
+  const left = Math.max(...["top-card", "left-fold"].map((id) => edge(id, "right") ?? 0)) + 12;
+  const right = Math.min(...["panel", "panel-fold"].map((id) => edge(id, "left") ?? window.innerWidth)) - 12;
+  const docked = right - left < MIN_HEADLINE_WIDTH;
+  dock(docked);
+  box.style.left = docked ? "" : `${left}px`;
+  box.style.right = docked ? "" : `${window.innerWidth - right}px`;
+}
+
+function openReadingGuide() {
+  openHelp("help");
+  document.getElementById("reading-guide").scrollIntoView({ block: "start" });
 }
 
 // The legend's "가게" section (D71): the same markers the map draws, from zoom 14 where they show
@@ -2242,7 +2496,7 @@ function openLead(trade, dong) {
 }
 
 // ---------------------------------------------------------------------------
-// Find by wishlist (wishlist.js): tick conditions, see the neighborhoods meeting all of them in pink
+// Find by wishlist (wishlist.js): tick conditions, see the neighborhoods meeting all of them in green
 // ---------------------------------------------------------------------------
 function openWishlist() {
   state.wishlist = [];
@@ -2295,13 +2549,20 @@ function wishlistView() {
   });
   return `<div class="sheet-header">
       <button type="button" class="icon-button" id="wishlist-back" aria-label="${t("back")}">‹</button>
-      <div class="sheet-heading"><h2 class="sheet-title">${t("wishlistTitle")}</h2>
+      <div class="sheet-heading"><p class="eyebrow">${t("wishlistTitle")}</p><h2 class="sheet-title">${wishlistHeadline()}</h2>
         <p class="sheet-subtitle">${state.trade ? escapeHtml(tradeName(state.trade)) : t("wishlistAllTrades")}</p></div>
     </div>
     <p class="sheet-lead">${t("wishlistIntro")}</p>
     ${groups.join("")}
     ${state.trade ? "" : `<p class="fine-print">${t("needsTradeNote")}</p>`}
     <section class="box">${wishlistResults()}</section>`;
+}
+
+// The heading counts the areas meeting every ticked condition, out of Seoul's (D108)
+function wishlistHeadline() {
+  const total = state.data.dongs.length;
+  if (!state.wishlist.length) return t("wishlistStart", total);
+  return t("wishlistFinding", currentWishResult().matches.length, total);
 }
 
 function criterionLabel(key) {
@@ -2421,7 +2682,7 @@ function customersView() {
   const { who, when, narrow, name } = state.customers;
   return `<div class="sheet-header">
       <button type="button" class="icon-button" id="customers-back" aria-label="${t("back")}">‹</button>
-      <div class="sheet-heading"><h2 class="sheet-title">${t("customersTitle")}</h2>
+      <div class="sheet-heading"><p class="eyebrow">${t("customersTitle")}</p><h2 class="sheet-title">${customerHeadline()}</h2>
         <p class="sheet-subtitle">${t("customersSubtitle")}</p></div>
     </div>
     ${referenceNote()}
@@ -2438,12 +2699,28 @@ function customersView() {
     <section class="box">${customerResults()}</section>`;
 }
 
+// Areas with a count for the chosen customers and times, most first; null until both are picked
+function customerRows() {
+  const { who, when } = state.customers;
+  if (!who.length || !when.length) return null;
+  return state.data.dongs.map((dong) => ({ dong, count: customerValue(dong) }))
+    .filter((row) => row.count !== null)
+    .sort((a, b) => b.count - a.count);
+}
+
+// The heading names the area with the most of the chosen customers, against a typical area (D108)
+function customerHeadline() {
+  const rows = customerRows(), total = state.data.dongs.length;
+  if (!rows) return t("customersStart", total);
+  if (!rows.length) return t("customersNoneHeadline", total);
+  return t("customersFinding", escapeHtml(placeName(rows[0].dong)), formatNumber(rows[0].count), formatNumber(customerTypical()));
+}
+
 function customerResults() {
-  const { who, when, narrow } = state.customers;
-  if (!who.length || !when.length) return `<p class="muted">${t("customersPick")}</p>`;
-  const rows = state.data.dongs.map((dong) => ({ dong, count: customerValue(dong) })).filter((row) => row.count !== null);
+  const { narrow } = state.customers;
+  const rows = customerRows();
+  if (!rows) return `<p class="muted">${t("customersPick")}</p>`;
   if (!rows.length) return `<p class="muted">${t("customersNone")}</p>`;
-  rows.sort((a, b) => b.count - a.count);
   const typical = customerTypical();
   return `<h3 class="box-headline">${t("customersTopTitle")}</h3>
     ${customerBars(rows.slice(0, 5), typical)}
@@ -2460,7 +2737,7 @@ function customerBars(rows, typical) {
     const similar = state.extraKinds.length ? `<span class="customer-line">${t("similarLine", similarShops(dong))}</span>` : "";
     return `<button type="button" class="customer-bar" data-code="${dong.code}">
       <span class="customer-name">${escapeHtml(placeName(dong))}</span>
-      <span class="customer-track"><span class="customer-fill" style="width:${share(count)};background:${COLORS.people}"></span>
+      <span class="customer-track"><span class="customer-fill" style="width:${share(count)};background:${COLORS.brand}"></span>
         <span class="customer-typical" style="left:${share(typical)}"></span></span>
       <span class="customer-number">${formatNumber(count)}${t("people")}</span>${similar}</button>`;
   });
@@ -2521,14 +2798,14 @@ function similarSection(dong) {
 
 // ---------------------------------------------------------------------------
 // Simulation (simulation.js): "what if I open my shop here?"
-// A pink pin marks the shop; the 5-minute walk around it is drawn, competitors inside get a red ring, and the
+// A green pin marks the shop; the 5-minute walk around it is drawn, competitors inside get a red ring, and the
 // neighborhood's gap tint can be shown before and after the shop opens. Tap the map or drag the pin to move it.
 // ---------------------------------------------------------------------------
 function addSimulationLayers() {
   const map = state.map;
   map.addSource("sim-area", { type: "geojson", data: EMPTY });
-  // the 5-minute walk: a thin ink dash, no fill, so "내 가게" is the only pink on the map (round 5: a pink
-  // ring and wash with the rivals' rings read as one pink-red texture). Dash lengths are in line widths: 4 px on, 4 off.
+  // the 5-minute walk: a thin ink dash, no fill, so "내 가게" is the only filled green mark there (round 5: a coloured
+  // ring and wash with the rivals' rings read as one muddy texture). Dash lengths are in line widths: 4 px on, 4 off.
   map.addLayer({ id: "sim-area-line", type: "line", source: "sim-area",
     paint: { "line-color": COLORS.ink, "line-width": 1.5, "line-dasharray": [2.67, 2.67] } }, OUTLINE_BEFORE);
   map.addSource("sim-rivals", { type: "geojson", data: EMPTY });
@@ -2709,7 +2986,7 @@ function simCompetitionSection(competition, name) {
     : t("simNoneNearby", name);
   const gap = competition.gap;
   return `<section class="box">
-      <h3 class="box-headline">${t("simCompetitionTitle")}</h3>
+      <h3 class="box-headline">${t("simCompetitionTitle", name, competition.nearbyAfter)}</h3>
       <p class="sentence">${nearbyText}</p>
       ${gap ? `<p class="sentence">${t("simDongShops", name, gap.shopsBefore, gap.shopsAfter, Math.round(gap.expected))}</p>${gapMeter(gap)}
         ${chartHint(t("hintGapMeter", name, gap.shopsBefore, gap.shopsAfter, Math.round(gap.expected)))}
@@ -2717,7 +2994,7 @@ function simCompetitionSection(competition, name) {
     </section>`;
 }
 
-// Where the neighborhood sits on the gap scale, before (hollow) and after (pink) the new shop
+// Where the neighborhood sits on the gap scale, before (hollow) and after (green) the new shop
 function gapMeter(gap) {
   const lowest = -3, highest = 3;
   const position = (score) => ((Math.min(highest, Math.max(lowest, score)) - lowest) / (highest - lowest)) * 100;
@@ -2740,7 +3017,7 @@ function simSalesSection(sales, name) {
   const pattern = state.data.trade_patterns.find((p) => p.trade === state.trade).pattern;
   const seoul = state.medians[state.trade].sales;
   return `<section class="box">
-      <h3 class="box-headline">${t("simSalesTitle")}</h3>
+      <h3 class="box-headline">${t("simSalesTitle", formatWon(sales.likely))}</h3>
       ${sales.fromSeoul ? `<p class="sentence">${t("simSalesFromSeoul")}</p>` : `<p class="sentence">${t("simSalesRange", formatWon(sales.low), formatWon(sales.high))}</p>`}
       ${salesBar(sales, seoul)}
       ${chartHint(sales.fromSeoul ? t("hintSalesSeoul", formatWon(seoul)) : t("hintSalesRange", formatWon(sales.low), formatWon(sales.high)))}
@@ -2749,7 +3026,7 @@ function simSalesSection(sales, name) {
     </section>`;
 }
 
-// The sales range (green: money coming in), the likeliest point (pink: your shop) and the Seoul median (gray)
+// The sales range (light green), the likeliest point (dark green: your shop) and the Seoul median (gray)
 function salesBar(sales, seoul) {
   const top = Math.max(sales.high, seoul) * 1.15;
   const at = (value) => (value / top) * 100;
@@ -2768,7 +3045,7 @@ function salesBar(sales, seoul) {
 function simSurvivalSection(survival) {
   const percent = (share) => Math.round(share * 100);
   return `<section class="box">
-      <h3 class="box-headline">${t("simSurvivalTitle")}</h3>
+      <h3 class="box-headline">${t("simSurvivalTitle", percent(survival.curve[3]))}</h3>
       <p class="sentence">${statusLine(survival.status, t("simSurvival", percent(survival.curve[1]), percent(survival.curve[3]), percent(survival.seoulCurve[3])))}</p>
       ${survivalChart(survival)}
       ${chartHint(t("hintSurvival", percent(survival.curve[3])))}
@@ -2776,7 +3053,7 @@ function simSurvivalSection(survival) {
     </section>`;
 }
 
-// Two lines over 0-5 years: this spot (pink, your shop) and the Seoul median of the trade (gray, dashed).
+// Two lines over 0-5 years: this spot (green, your shop) and the Seoul median of the trade (gray, dashed).
 // The lines stretch with the panel; every label is HTML, so text keeps its size (D69).
 function survivalChart(survival) {
   const x = (year) => (year / SURVIVAL_YEARS) * 100;   // % of the plot's width
@@ -2795,7 +3072,7 @@ function survivalChart(survival) {
     hereY = middle + (hereSide * labelGap) / 2;
     seoulY = middle - (hereSide * labelGap) / 2;
   }
-  return `<div class="chart survival" role="img" aria-label="${t("simSurvivalTitle")}">
+  return `<div class="chart survival" role="img" aria-label="${t("simSurvivalTitle", Math.round(survival.curve[3] * 100))}">
       <div class="chart-shares">${shares}</div>
       <div class="chart-plot">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${grid}
@@ -2820,7 +3097,8 @@ function simRentSection(rent) {
     ? `<p class="sentence muted">${t("simRentUnknown")}</p>`
     : `<p class="sentence">${statusLine(rent.status, rent.share === null ? t("simRentOnly", formatWon(rent.monthly)) : t("simRent", formatWon(rent.monthly), Math.round(rent.share * 100)))}</p>`;
   return `<section class="box">
-      <h3 class="box-headline">${t("simRentTitle")}</h3>
+      <h3 class="box-headline">${rent.monthly === null ? t("simRentTitleUnknown", escapeHtml(placeName(state.sim.dong)))
+        : t("simRentTitle", formatWon(rent.monthly))}</h3>
       ${stepper}${sentence}
       <p class="fine-print">${t("simAreaHint")} ${t("simRentRule")}</p>
     </section>`;
@@ -3037,6 +3315,13 @@ function layerValueText(value) {
 }
 
 // Busiest hour within business hours (at night most people present are residents at home)
+// 23,456 -> 23,000: two significant figures, for numbers said in a sentence (tiles keep the exact value)
+function roundForStory(n) {
+  if (!Number.isFinite(n) || n === 0) return n;
+  const step = 10 ** (Math.floor(Math.log10(Math.abs(n))) - 1);
+  return Math.round(n / step) * step;
+}
+
 function peakOf(hourly) {
   let best = { value: -1, hour: 0, dayType: "weekday" };
   for (const dayType of ["weekday", "weekend"]) {

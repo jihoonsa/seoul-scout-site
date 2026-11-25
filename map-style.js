@@ -2,17 +2,18 @@
 // Only what helps a founder find their way is drawn: water, parks, roads, rail, buildings, stations and a few landmarks.
 // Our own layers go in between (see app.js): neighborhood tints under the roads, outlines and store dots under the labels.
 
-export const TINT_BEFORE = "water";            // neighborhood tints sit under the water, every road and building (round 5: a tint over the river's hatch read as brown stripes)
+export const TINT_BEFORE = "landcover";        // neighborhood tints sit under parks, woods, water, every road and building (D94; round 5: a tint over the river read as brown stripes)
 export const OUTLINE_BEFORE = "label-water";   // neighborhood outlines sit under every label
 export const DOTS_BEFORE = "stations-dot";     // store dots sit under the station labels
 
-// The ink atlas (D75, design/DESIGN.md): white land on a neutral ground, water in a fine hatch, no yellow roads
+// The ink atlas (D75, design/DESIGN.md): white land on a neutral ground, light blue water, dotted parks, no yellow roads
 const COLORS = {
-  outside: "#f4f5f3", land: "#ffffff", water: "#e1e9ec", waterLine: "#86a0ab", waterText: "#4f6c77", green: "#e7ede3",
+  outside: "#f4f5f3", land: "#ffffff", water: "#dbe9f6", waterLine: "#7fa3c4", waterText: "#3f6a8f", green: "#eef2ec",
   road: "#ffffff", roadCasing: "#e4e5e1", highway: "#ffffff", highwayCasing: "#cfd1cc", rail: "#c9cbc6",
   building: "#f1f2ef", buildingLine: "#e3e4e0", text: "#6a6d71", textStrong: "#3a3c3f", halo: "#ffffff",
 };
 export const WATER_HATCH = "water-hatch";
+export const PARK_DOTS = "park-dots";
 
 // The water's fine horizontal hatch, drawn once into an image the map repeats (2x for sharp screens)
 export function waterHatchImage() {
@@ -20,11 +21,19 @@ export function waterHatchImage() {
   const paint = (row, [r, g, b]) => {
     for (let x = 0; x < size; x++) data.set([r, g, b, 255], (row * size + x) * 4);
   };
-  for (let row = 0; row < size; row++) paint(row, row === 4 || row === 5 ? [0xa9, 0xbd, 0xc5] : [0xe1, 0xe9, 0xec]);
+  for (let row = 0; row < size; row++) paint(row, row === 4 || row === 5 ? [0xbd, 0xd4, 0xec] : [0xdb, 0xe9, 0xf6]);
   return { width: size, height: size, data };
 }
-// D84.1: what a place looks like, in muted neutrals under every tint (not zoning, no beige, and none of the
-// meaning colours: green stays "good" and blue "people"; parks are a gray-green, water keeps its gray-blue hatch).
+
+// Parks and woods: fine gray-green dots on a pale ground, so they read as green space and never as a tint (D94)
+export function parkDotsImage() {
+  const size = 10, data = new Uint8Array(size * size * 4);
+  for (let i = 0; i < size * size; i++) data.set([0xee, 0xf2, 0xec, 255], i * 4);
+  for (const [x, y] of [[2, 2], [3, 2], [2, 3], [3, 3], [7, 7], [8, 7], [7, 8], [8, 8]]) data.set([0xc9, 0xd6, 0xc4, 255], (y * size + x) * 4);
+  return { width: size, height: size, data };
+}
+// D84.1: what a place looks like, in muted neutrals under every tint (not zoning, no beige, and not the service green).
+// D94: parks and woods (dotted gray-green) and water (light blue) are drawn over the tints, as places with no shops.
 // OpenStreetMap in Seoul marks homes well (most apartment blocks), shops and factories only in part.
 const LAND_USE = [
   { kinds: ["residential"], color: "#f1f2ef" },                         // apartment blocks and houses
@@ -66,19 +75,21 @@ export function baseStyle(language, basemapUrl) {
   const texts = labelTexts(language);
   return {
     version: 8,
-    glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
+    // Served with the page, only the ranges our labels use: a stalled font request to protomaps.github.io kept the map
+    // from ever loading (D109). A range that is not here gets a quick 404, and MapLibre draws it with a local font.
+    glyphs: `${new URL("vendor/noto-sans-glyphs/", import.meta.url).href}{fontstack}/{range}.pbf`,
     sources: {
       basemap: { type: "vector", url: basemapUrl, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://protomaps.com">Protomaps</a>' },
     },
     layers: [
       { id: "background", type: "background", paint: { "background-color": COLORS.outside } },
       { id: "earth", type: "fill", source: "basemap", "source-layer": "earth", paint: { "fill-color": COLORS.land } },
-      { id: "landcover", type: "fill", source: "basemap", "source-layer": "landcover", maxzoom: 8,
-        filter: ["in", ["get", "kind"], ["literal", ["forest", "grassland", "scrub"]]], paint: { "fill-color": COLORS.green, "fill-opacity": 0.5 } },
       ...LAND_USE.map(({ kinds, color }) => ({ id: `landuse-${kinds[0]}`, type: "fill", source: "basemap", "source-layer": "landuse",
         minzoom: 11, filter: ["in", ["get", "kind"], ["literal", kinds]], paint: { "fill-color": color } })),
+      { id: "landcover", type: "fill", source: "basemap", "source-layer": "landcover", maxzoom: 8,
+        filter: ["in", ["get", "kind"], ["literal", ["forest", "grassland", "scrub"]]], paint: { "fill-color": COLORS.green, "fill-opacity": 0.5 } },
       { id: "landuse-green", type: "fill", source: "basemap", "source-layer": "landuse",
-        filter: ["in", ["get", "kind"], ["literal", GREEN_KINDS]], paint: { "fill-color": COLORS.green } },
+        filter: ["in", ["get", "kind"], ["literal", GREEN_KINDS]], paint: { "fill-pattern": PARK_DOTS } },
       { id: "water", type: "fill", source: "basemap", "source-layer": "water",
         filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-pattern": WATER_HATCH } },
       { id: "water-edge", type: "line", source: "basemap", "source-layer": "water",
