@@ -385,7 +385,7 @@ function drawNeighborhoods() {
   map.addLayer({ id: "seoul-border", type: "line", source: "outside-seoul",
     paint: { "line-color": COLORS.ink, "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.2, 14, 2.2] } }, OUTLINE_BEFORE);
 
-  // Suggested neighborhoods (and wishlist matches) get a green outline; the selected one a dark ink outline
+  // Suggested neighborhoods (and wishlist matches) get a lime outline; the selected one a dark ink outline
   const highlighted = ["boolean", ["feature-state", "highlighted"], false];
   // Close in, the tint thins (half by zoom 14, under a third at street level), so the streets and buildings stay readable
   const tint = ["coalesce", ["feature-state", "opacity"], 0];
@@ -478,7 +478,9 @@ function isFocused() {
 function syncFocus() {
   const map = state.map;
   const code = isFocused() ? state.selected.code : null;
-  if (!map?.getSource("focus-mask") || code === state.focusCode) return;
+  if (!map?.getSource("focus-mask")) return;
+  if (!state.selected && !state.focusCode) state.focusReturn = null;   // left from a simulation, where the cover was already off
+  if (code === state.focusCode) return;
   if (code && !state.focusReturn) state.focusReturn = { center: map.getCenter(), zoom: map.getZoom() };
   const back = !state.selected ? state.focusReturn : null;
   state.focusCode = code;
@@ -509,7 +511,7 @@ function isCandidate(dong) {
   return Boolean(state.trade) && dong.trade_candidates.some((c) => c.trade === state.trade);
 }
 
-// Green outline: wishlist matches while the wishlist is open, else the suggestions of the chosen trade (or of all trades)
+// Lime outline: wishlist matches while the wishlist is open, else the suggestions of the chosen trade (or of all trades)
 function isHighlighted(dong) {
   if (state.wishlist) return state.wishMatches.has(dong.code);
   if (state.trade) return isCandidate(dong);
@@ -534,7 +536,7 @@ function tintOf(dong) {
   return { color: layer.color, opacity: OPACITY_STEPS[classOf(layer, value)] };
 }
 
-// Opening view: a light green where a trade has a gap, stronger where gaps passed the checks (suggested)
+// Opening view: a light blue where a trade has a gap, stronger where gaps passed the checks (suggested)
 function suggestedTint(dong) {
   const summary = state.overview.byDong.get(dong.code);
   if (!summary) return NO_TINT;
@@ -624,7 +626,7 @@ function pinRank(n) {
   return String(n).padStart(2, "0");
 }
 
-// A pin: the green dot sits on the neighborhood's centre, the rank and the name to its right (D75)
+// A pin: the lime dot sits on the neighborhood's centre, the rank and the name to its right (D75)
 function drawPins() {
   for (const pin of state.pins) pin.remove();
   state.pins = [];
@@ -1331,7 +1333,7 @@ function insightSentence() {
   return t("homeInsight", Object.keys(state.meta.trade_subtypes).length, roomTrades);
 }
 
-// Gaps -> suggestions -> strongest leads, as three shrinking green bars (one hue, darker = stronger)
+// Gaps -> suggestions -> strongest leads, as three shrinking bars (light blue, blue, then lime for the strongest)
 function funnelChart(overview) {
   // counted in neighborhoods (곳), like the welcome and the map; the trade count (건) follows in the small line
   const rows = [
@@ -1358,7 +1360,7 @@ function mostWorthALook() {
   return tradeCounts().reduce((best, count) => (count.total > best.total ? count : best));
 }
 
-// Suggested neighborhoods per trade: one green bar each (★ part darker), with what a gap means for the trade
+// Suggested neighborhoods per trade: one blue bar each (★ part in lime), with what a gap means for the trade
 function tradeBars() {
   const counts = tradeCounts();
   const most = Math.max(...counts.map((c) => c.total));
@@ -1881,7 +1883,7 @@ function salesChangeText(change) {
   return rounded === 0 ? t("sameYearAgo") : t("salesChangeShort", signed(rounded));
 }
 
-// A word in green: what Seoul Scout points at (fewer shops than its crowd would usually mean)
+// A word in lime: what Seoul Scout points at (fewer shops than its crowd would usually mean)
 function brandChip(label) {
   return `<span class="status status-brand"><span class="status-icon" aria-hidden="true">↓</span>${escapeHtml(label)}</span>`;
 }
@@ -1988,7 +1990,7 @@ function salesCard(values, name) {
   const sales = values.sales_per_shop, usual = state.medians[state.trade].sales;
   if (!isKnown(sales)) {
     return card({ key: "sales", label: t("knSales"), sentence: t("knSalesNone", name),
-                  compare: isKnown(usual) ? t("knSeoulCompare", tradeName(state.trade), formatWon(usual)) : "" });
+                  compare: isKnown(usual) ? t("knSeoulCompare", name, formatWon(usual)) : "" });
   }
   return card({
     key: "sales", label: t("knSales"), sentence: t("knSalesSentence", name, formatWon(roundForStory(sales))),
@@ -2689,7 +2691,7 @@ function openLead(trade, dong) {
 }
 
 // ---------------------------------------------------------------------------
-// Find by wishlist (wishlist.js): tick conditions, see the neighborhoods meeting all of them in green
+// Find by wishlist (wishlist.js): tick conditions, see the neighborhoods meeting all of them outlined in lime
 // ---------------------------------------------------------------------------
 function openWishlist() {
   state.wishlist = [];
@@ -2991,13 +2993,13 @@ function similarSection(dong) {
 
 // ---------------------------------------------------------------------------
 // Simulation (simulation.js): "what if I open my shop here?"
-// A green pin marks the shop; the 5-minute walk around it is drawn, competitors inside get a red ring, and the
+// A lime pin marks the shop; the 5-minute walk around it is drawn, competitors inside get a red ring, and the
 // neighborhood's gap tint can be shown before and after the shop opens. Tap the map or drag the pin to move it.
 // ---------------------------------------------------------------------------
 function addSimulationLayers() {
   const map = state.map;
   map.addSource("sim-area", { type: "geojson", data: EMPTY });
-  // the 5-minute walk: a thin ink dash, no fill, so "내 가게" is the only filled green mark there (round 5: a coloured
+  // the 5-minute walk: a thin ink dash, no fill, so "내 가게" is the only filled lime mark there (round 5: a coloured
   // ring and wash with the rivals' rings read as one muddy texture). Dash lengths are in line widths: 4 px on, 4 off.
   map.addLayer({ id: "sim-area-line", type: "line", source: "sim-area",
     paint: { "line-color": COLORS.ink, "line-width": 1.5, "line-dasharray": [2.67, 2.67] } }, OUTLINE_BEFORE);
@@ -3030,6 +3032,7 @@ async function startSimulation(lng, lat) {
   state.dots.setNamesFromZoom(SIM_NAMES_ZOOM);
   state.selected = dong;
   showOutline("dong-selected", dong);
+  syncFocus();   // the cover lifts now, not after the district files load
   drawPins();
   renderLayerControl();
   state.map.easeTo({ center: [lng, lat], zoom: simulationZoom(lng, lat), offset: freeAreaOffset(), duration: 800 });
@@ -3187,7 +3190,7 @@ function simCompetitionSection(competition, name) {
     </section>`;
 }
 
-// Where the neighborhood sits on the gap scale, before (hollow) and after (green) the new shop
+// Where the neighborhood sits on the gap scale, before (hollow) and after (lime) the new shop
 function gapMeter(gap) {
   const lowest = -3, highest = 3;
   const position = (score) => ((Math.min(highest, Math.max(lowest, score)) - lowest) / (highest - lowest)) * 100;
@@ -3219,7 +3222,7 @@ function simSalesSection(sales, name) {
     </section>`;
 }
 
-// The sales range (light green), the likeliest point (dark green: your shop) and the Seoul median (gray)
+// The sales range (light lime), the likeliest point (dark lime: your shop) and the Seoul median (gray)
 function salesBar(sales, seoul) {
   const top = Math.max(sales.high, seoul) * 1.15;
   const at = (value) => (value / top) * 100;
@@ -3246,7 +3249,7 @@ function simSurvivalSection(survival) {
     </section>`;
 }
 
-// Two lines over 0-5 years: this spot (green, your shop) and the Seoul median of the trade (gray, dashed).
+// Two lines over 0-5 years: this spot (lime, your shop) and the Seoul median of the trade (gray, dashed).
 // The lines stretch with the panel; every label is HTML, so text keeps its size (D69).
 function survivalChart(survival) {
   const x = (year) => (year / SURVIVAL_YEARS) * 100;   // % of the plot's width
