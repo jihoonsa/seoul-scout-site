@@ -1,7 +1,8 @@
 /* Seoul Scout: an ink atlas with instrument readouts (design/DESIGN.md, D75).
-   A quiet ink map on a neutral ground; white surfaces divided by ink rules; one green for what we point out (D94).
-   Colors have one meaning each, the same as colors.js and map-style.js (change them together):
-   green = you, our suggestions and good for a founder · red = risk only (closures, competitors) · gray = average, no data
+   A quiet ink map on a neutral ground; white surfaces divided by ink rules; lime with a gradient for what we point
+   out, sky blue for the map views' data (D111, the team note). Colors have one meaning each, the same as colors.js and
+   map-style.js (change them together):
+   lime = you, our suggestions and good for a founder · sky blue = the map's data · red = risk only · gray = average, no data
    blue = people · violet = cost · ink = text, rules and what you selected. Statuses always come with an icon and a word. */
 
 :root {
@@ -12,18 +13,21 @@
   --fill: #eeefec;                     /* quiet buttons and tracks */
   --paper: #ffffff;                    /* every surface: panels, boxes, inputs */
   --ground: #f4f5f3;                   /* behind the map and outside Seoul */
-  --brand: #1f8150;                    /* green (D94): pins, gaps, your shop, primary buttons, the hero figure */
-  --brand-strong: #1a6b40;
-  --brand-text: #1a6b40;               /* green text and links */
-  --brand-soft: rgba(31, 129, 80, 0.1);
-  --wash-2: #b5ddc6;                   /* the missing part of a meter; far fewer shops on the map */
-  --wash-1: #e3f3ea;
-  --wash-3: #6fb791;                   /* home map only: worth a look for 2+ trades (colors.js SUGGESTED_STYLE) */
+  --brand: #a3e635;                    /* lime (D111): fills, always with ink on them (12.1:1): pins, buttons */
+  --brand-gradient: linear-gradient(135deg, #d9f99d, #a3e635 55%, #84cc16);   /* the signature: primary buttons, pins, the verdict's rule */
+  --brand-line: #65a30d;               /* lime marks and lines on white (3.1:1): chart highlights, your shop, outlines */
+  --brand-strong: #4d7c0f;
+  --brand-text: #4d7c0f;               /* lime text and links (5.0:1) */
+  --brand-soft: rgba(132, 204, 22, 0.16);
+  --map: #0284c7;                      /* sky blue: the map views' data (colors.js COLORS.map) */
+  --wash-2: #86c5ea;                   /* the missing part of a meter; far fewer shops on the map (colors.js GAP_STYLE) */
+  --wash-1: #dceefa;
+  --wash-3: #5aacdf;                   /* home map only: worth a look for 2+ trades (colors.js SUGGESTED_STYLE) */
   --accent: var(--brand-text);         /* every link and quiet button */
   --accent-soft: var(--brand-soft);
-  --good: #1f8150;
-  --good-text: #1a6b40;
-  --good-soft: rgba(31, 129, 80, 0.1);
+  --good: #65a30d;
+  --good-text: #4d7c0f;
+  --good-soft: rgba(132, 204, 22, 0.16);
   --risk: #d92d20;                     /* red, for risk only (D83) */
   --risk-text: #b42318;
   --risk-soft: rgba(217, 45, 32, 0.1);
@@ -205,7 +209,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 }
 .place-card::before {
   counter-increment: place; content: counter(place, decimal-leading-zero); position: absolute; left: 8px; top: 13px;
-  font-size: 22px; font-weight: 800; letter-spacing: -0.04em; color: var(--brand);
+  font-size: 22px; font-weight: 800; letter-spacing: -0.04em; color: var(--brand-text);
 }
 .place-card.lead::before { counter-increment: none; content: attr(data-rank); }   /* the area's pin number (app.js leadList) */
 .place-card:hover { background: var(--ground); }
@@ -258,7 +262,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .hero { padding: 18px 0 18px; border-bottom: 1px solid var(--ink); }
 .cell-label { margin: 0 0 6px; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em; color: var(--secondary); }
 .hero-figure {
-  margin: 0; font-size: var(--text-hero); font-weight: 800; line-height: 0.9; letter-spacing: -0.06em; color: var(--brand);
+  margin: 0; font-size: var(--text-hero); font-weight: 800; line-height: 0.9; letter-spacing: -0.06em; color: var(--brand-text);
 }
 .hero-figure small { font-size: 0.5em; letter-spacing: 0; margin-left: 2px; }
 /* the figure with its two keyed values beside it; the bar pair runs under both */
@@ -285,7 +289,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 /* the busiest-time cell: each time of day's share of sales, the busiest in green */
 .time-strip { display: flex; align-items: flex-end; gap: 3px; height: 28px; margin-top: 10px; }
 .time-strip i { flex: 1; background: var(--ink); }
-.time-strip i.top { background: var(--brand); }
+.time-strip i.top { background: var(--brand-line); }
 .cells { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--ink); }
 .cell { min-width: 0; padding: 16px 16px 16px 0; }
 .cell:nth-child(even) { padding: 16px 0 16px 16px; border-left: 1px solid var(--ink); }
@@ -298,9 +302,6 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .meter i.gap { background: var(--wash-2); }
 .meter.solid { display: block; background: var(--wash-2); }
 .meter.solid i { display: block; height: 100%; }
-.pair-bars { display: grid; gap: 3px; margin-top: 10px; }
-.pair-bars i { display: block; height: 8px; background: var(--ink); }
-.pair-bars i.typical { background: var(--hatch); box-shadow: inset 0 0 0 1px var(--typical-line); }
 @container (max-width: 380px) {
   .hero-figure { font-size: 68px; }
   .hero-row { flex-wrap: wrap; gap: 8px 16px; }
@@ -380,8 +381,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
   flex: 1; min-height: 48px; border: 1px solid var(--ink); border-radius: var(--radius); padding: 11px 12px;
   font-size: var(--text-md); font-weight: 600;
 }
-.primary-button { background: var(--brand); border-color: var(--brand); color: #fff; }
-.primary-button:hover { background: var(--brand-text); border-color: var(--brand-text); }
+.primary-button { background: var(--brand-gradient); border-color: var(--brand-line); color: var(--ink); }   /* D111: ink on lime */
+.primary-button:hover { background: var(--brand); }
 .primary-button.small { width: 100%; min-height: 40px; margin-top: 10px; padding: 9px 10px; font-size: var(--text-sm); }
 .secondary-button { background: #fff; color: var(--text); }
 .secondary-button:hover { background: var(--fill); }
@@ -407,7 +408,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .layer-chevron { margin-left: auto; flex: none; display: flex; transition: transform 0.15s; }
 .layer-control.open .layer-chevron { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .layer-chevron { transition: none; } }
-.layer-icon { display: flex; flex: none; color: var(--brand); }
+.layer-icon { display: flex; flex: none; color: var(--brand-text); }
 .layer-menu { display: none; padding: 4px 0; }
 .layer-control.open .layer-menu { display: grid; }
 .menu-item { border: 0; background: none; text-align: left; padding: 9px 10px; border-radius: 2px; font-size: var(--text-sm); }
@@ -468,7 +469,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .dot-key:first-child { margin-left: 0; }
 .dot-key.store { background: #5c636a; }
 .dot-key.muted { background: #c4c4c9; }
-.dot-key.outside { background: #fff; box-shadow: inset 0 0 0 1.5px rgba(31, 129, 80, 0.7); }   /* store-dots.js shop-outside */
+.dot-key.outside { background: #fff; box-shadow: inset 0 0 0 1.5px rgba(101, 163, 13, 0.7); }   /* store-dots.js shop-outside */
 /* the legend's 가게 section (D71): the map's own markers */
 .legend-shops { padding: 8px 6px 6px; margin-top: 6px; border-top: 1px solid var(--separator); font-size: var(--text-sm); color: var(--secondary); }
 .legend-shops ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 5px; }
@@ -517,7 +518,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
   font-size: var(--text-xs); font-weight: 600; white-space: nowrap;
 }
 .pin-dot {
-  flex: none; width: 15px; height: 15px; margin-right: 4px; border-radius: 50%; background: var(--brand);
+  flex: none; width: 15px; height: 15px; margin-right: 4px; border-radius: 50%; background: var(--brand-gradient);
   box-shadow: 0 0 0 2.5px #fff, 0 0 0 3.5px var(--ink);
 }
 .pin-rank {
@@ -548,7 +549,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .pin-missing { margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--separator); color: var(--brand-text); font-weight: 800; }
 .legend-extra .pin-missing { margin: 0 4px 0 0; padding: 0; border: 0; }
 .pin:hover .pin-name { background: #fff; text-decoration: underline; text-underline-offset: 2px; }
-.pin:hover .pin-dot { background: var(--brand-text); }
+.pin:hover .pin-dot { background: var(--brand-line); }
 
 .tooltip {
   position: absolute; left: 0; top: 0; z-index: 6; padding: 5px 9px; border-radius: var(--radius); background: var(--ink);
@@ -622,7 +623,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .home-insight { margin: 0 0 8px; font-size: 16.5px; font-weight: 600; line-height: 1.5; }
 .home-insight b { color: var(--brand-text); font-weight: 800; }
 .home-example { margin: 16px 0 20px; padding: 14px 0 12px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
-.example-figure { margin: 0; font-size: var(--text-figure); font-weight: 800; line-height: 1; letter-spacing: -0.035em; color: var(--brand); }
+.example-figure { margin: 0; font-size: var(--text-figure); font-weight: 800; line-height: 1; letter-spacing: -0.035em; color: var(--brand-text); }
 .example-figure small { font-size: 0.6em; letter-spacing: 0; margin-left: 1px; }
 .home-example .meter { height: 12px; margin-top: 12px; }
 .home-example .example-open { margin-top: 8px; }
@@ -685,7 +686,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .funnel-bar { height: 14px; box-shadow: inset 0 0 0 1px var(--ink); }
 .funnel-bar.step-1 { background: var(--wash-1); }
 .funnel-bar.step-2 { background: var(--wash-2); }
-.funnel-bar.step-3 { background: var(--brand); }
+.funnel-bar.step-3 { background: var(--brand-line); }
 /* the robustness check under the funnel: a ruled line, its label in ink, the count in green */
 .check-line { margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--rule); font-size: var(--text-sm); line-height: 1.5; }
 .check-line b:first-child { margin-right: 6px; font-size: var(--text-xs); letter-spacing: 0.04em; }
@@ -704,7 +705,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .trade-bar-track { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .trade-bar-fill { position: relative; display: block; height: 12px; background: var(--wash-2); overflow: hidden;
   outline: 1px solid var(--ink); outline-offset: -1px; }   /* an outline draws over the ★ part inside */
-.trade-bar-strong { position: absolute; left: 0; top: 0; bottom: 0; background: var(--brand); }
+.trade-bar-strong { position: absolute; left: 0; top: 0; bottom: 0; background: var(--brand-line); }
 .trade-bar-value { font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
 .trade-bar-value span { color: var(--brand-text); }
 .trade-bar .status { font-size: var(--text-xs); padding: 1px 7px 1px 5px; }
@@ -713,17 +714,18 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
   font-size: var(--text-xs); font-weight: 600; vertical-align: 1px;
 }
 .chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.trade-chip.suggested { border-color: var(--brand); color: var(--brand-text); }
+.trade-chip.suggested { border-color: var(--brand-line); color: var(--brand-text); }
 .box .trade-chip { padding: 7px 10px; font-size: var(--text-xs); }
 .color-key { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; font-size: var(--text-xs); color: var(--secondary); }
 .color-key b { color: var(--text); font-weight: 600; margin-right: 2px; }
 .color-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 2px; margin-right: 8px; vertical-align: -2px; }
-.swatch-brand { background: var(--brand); }
+.swatch-brand { background: var(--brand-line); }
+.swatch-map { background: var(--map); }
 .swatch-good { background: var(--good); }
 .swatch-risk { background: var(--risk); }
 .swatch-neutral { background: var(--neutral); }
 .swatch-ink { background: #fff; box-shadow: inset 0 0 0 2.5px var(--ink); }
-.swatch-land { background: linear-gradient(90deg, #f1f2ef 0 25%, #e1e2df 25% 50%, #eef2ec 50% 75%, #dbe9f6 75%); box-shadow: inset 0 0 0 1px var(--separator); }   /* map-style.js LAND_USE (D84.1) */
+.swatch-land { background: linear-gradient(90deg, #f1f2ef 0 25%, #e1e2df 25% 50%, #eef2ec 50% 75%, #e9ebee 75%); box-shadow: inset 0 0 0 1px var(--separator); }   /* map-style.js LAND_USE (D84.1) */
 .legend-pin {
   display: inline-grid; place-items: center; width: 12px; height: 12px; margin: 0 6px 0 2px; border-radius: 50%;
   background: var(--brand); color: transparent; font-size: 0; box-shadow: 0 0 0 2px #fff, 0 0 0 3px var(--ink); vertical-align: -1px;
@@ -751,7 +753,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .gap-track span + span { box-shadow: inset 1px 0 0 rgba(20, 21, 23, 0.15); }
 .gap-track .marker { position: absolute; top: 50%; border-radius: 50%; transform: translate(-50%, -50%); }
 .gap-track .marker.before { width: 24px; height: 24px; box-shadow: inset 0 0 0 2.5px var(--ink); }
-.gap-track .marker.after { width: 12px; height: 12px; background: var(--brand); box-shadow: 0 0 0 2px #fff; }
+.gap-track .marker.after { width: 12px; height: 12px; background: var(--brand-line); box-shadow: 0 0 0 2px #fff; }
 .gap-scale { position: relative; height: 16px; margin-top: 4px; font-size: var(--text-xs); color: var(--tertiary); }
 .gap-scale span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .gap-scale span:first-child { transform: none; }
@@ -759,13 +761,13 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .gap-keys { margin: 2px 0 0; font-size: var(--text-xs); color: var(--secondary); }
 .key-before, .key-after { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 4px 0 0; vertical-align: -1px; }
 .key-before { box-shadow: inset 0 0 0 2px var(--ink); }
-.key-after { background: var(--brand); margin-left: 10px; }
+.key-after { background: var(--brand-line); margin-left: 10px; }
 .range-bar { margin: 22px 0 8px; }
 .range-track { position: relative; height: 14px; background: var(--fill); }
-.range-fill { position: absolute; top: 0; bottom: 0; background: rgba(31, 129, 80, 0.25); }   /* light green: the range; the dark green dot is the likeliest */
+.range-fill { position: absolute; top: 0; bottom: 0; background: rgba(132, 204, 22, 0.35); }   /* light lime: the range; the dark lime dot is the likeliest */
 .range-likely {
   position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; transform: translate(-50%, -50%);
-  background: var(--brand); box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--brand-line); box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 .range-seoul { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed var(--neutral); }
 .range-seoul span {
@@ -785,9 +787,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .chart-ends span { position: absolute; left: 0; transform: translateY(-50%); white-space: nowrap; }
 .chart.survival .chart-ticks { grid-column: 2; }
 .survival .grid { stroke: var(--separator); stroke-width: 1; }
-.survival .here-line { fill: none; stroke: var(--brand); stroke-width: 2.5; }
+.survival .here-line { fill: none; stroke: var(--brand-line); stroke-width: 2.5; }
 .survival .here-point {
-  position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--brand);
+  position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--brand-line);
   box-shadow: 0 0 0 1.5px #fff;
 }
 .survival .seoul-line { fill: none; stroke: var(--neutral); stroke-width: 2; stroke-dasharray: 4 3; }
@@ -806,7 +808,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
   white-space: nowrap;
 }
 .my-shop-pin {
-  width: 18px; height: 18px; margin: 3px 0 6px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--brand);
+  width: 18px; height: 18px; margin: 3px 0 6px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--brand-line);
   box-shadow: 0 0 0 2.5px #fff, 0 0 0 3.5px var(--ink);
 }
 .my-shop.before { opacity: 0.35; }
@@ -827,7 +829,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
     content: ""; position: absolute; left: 4px; top: 50%; width: 4px; height: 44px; margin-top: -22px; border-radius: 999px;
     background: var(--ink);
   }
-  .panel-handle:hover::after, .panel-handle:focus-visible::after { background: var(--brand); }
+  .panel-handle:hover::after, .panel-handle:focus-visible::after { background: var(--brand-line); }
   .panel-handle:focus-visible { outline: none; }
   .panel-fold {
     position: absolute; z-index: 6; left: -45px; top: 16px; width: 32px; height: 32px; border: 1px solid var(--ink);
@@ -1019,7 +1021,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .more .kn-grid { margin-top: 12px; }
 
 /* The sentence above the key numbers */
-.verdict { margin: 16px 0 0; padding: 14px 16px; border-left: 4px solid var(--brand); background: var(--ground); }
+.verdict { margin: 16px 0 0; padding: 14px 16px; border-left: 5px solid var(--brand-line); border-image: var(--brand-gradient) 1; background: var(--ground); }
 .verdict-headline { margin: 0 0 8px; font-size: var(--text-xl, 22px); font-weight: 800; line-height: 1.3; letter-spacing: -0.02em; }
 .verdict-headline:last-child { margin-bottom: 0; }
 .verdict .box-tag { margin: 0 0 6px; }
@@ -1028,18 +1030,57 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .summary-text { margin: 6px 0 0; font-size: var(--text-md); line-height: 1.55; }
 .summary-inputs { margin-top: 8px; }
 .summary-inputs summary { cursor: pointer; font-size: var(--text-sm); color: var(--accent); font-weight: 600; }
-/* D82, D95: the data story under the key numbers: a headline and one note per step, the step count as dots */
-.story { margin: 16px 0 0; padding: 12px 14px; border: 1px solid var(--ink); border-radius: var(--radius); background: var(--paper); }
-.story-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.story-head .eyebrow { margin: 0; }
-.story-headline { margin: 10px 0 4px; font-size: var(--text-md); font-weight: 700; line-height: 1.4; min-height: 2.8em; }   /* 2 lines: the buttons stay put */
-.story-note { margin: 0 0 10px; font-size: var(--text-sm); line-height: 1.5; color: var(--secondary); min-height: 3em; }
-.story-dots { display: inline-flex; gap: 6px; margin-left: auto; }
-.story-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--separator); }
-.story-dots span[aria-current="step"] { background: var(--brand); }
-.story-nav { display: flex; gap: 8px; }
-.story-nav button { flex: 1; }
-.story-off { margin-top: 12px; }
+/* D114 (team note): a card's label and + button, its sentence, a small picture, the comparison. The + button grows the
+   card to the panel's full width and its picture twice as tall (--grow), pushing the cards below it down. */
+.kn-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; align-self: stretch; }
+.kn-sentence { margin: 2px 0 0; font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
+.kn-sentence b { font-weight: 800; }
+.kn-main .kn-sentence { font-size: var(--text-md); }
+.kn-main .kn-sentence b { font-size: 1.5em; letter-spacing: -0.02em; line-height: 1.1; }
+.kn-grow {
+  flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; margin: -5px -5px 0 0; padding: 0;
+  border: 1px solid var(--separator); border-radius: 50%; background: var(--paper); color: var(--ink);
+  font: inherit; font-size: 17px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.kn-grow:hover { border-color: var(--ink); }
+.kn-grow:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.kn.grown { grid-column: 1 / -1; border-color: var(--ink); }
+.kn-graph { --grow: 1; align-self: stretch; margin: 6px 0 2px; }
+.kn.grown .kn-graph { --grow: 2; }
+.kn:not(.grown) .kn-more { display: none; }
+.kn-more { align-self: stretch; font-size: var(--text-xs); color: var(--secondary); line-height: 1.45; }
+.kn-more p { margin: 4px 0 0; }
+/* the pictures: two bars (here in ink, the usual hatched), ten houses, one line of the day, a pie */
+.pair-bars { display: grid; gap: calc(4px * var(--grow)); }
+.pair-row { display: grid; gap: 2px; min-width: 0; }
+.pair-text { font-size: var(--text-xs); color: var(--secondary); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kn.grown .pair-text { font-size: var(--text-sm); }
+.pair-bars i { display: block; height: calc(10px * var(--grow)); background: var(--ink); }
+.pair-bars i.typical { background: var(--hatch); box-shadow: inset 0 0 0 1px var(--typical-line); }
+.houses { display: block; width: 100%; max-width: calc(150px * var(--grow)); height: auto; overflow: visible; }
+.hour-track { position: relative; height: calc(4px * var(--grow)); margin: calc(6px * var(--grow)) 0 4px; background: var(--separator); }
+.hour-top {
+  position: absolute; top: 50%; height: calc(12px * var(--grow)); transform: translateY(-50%);
+  background: var(--brand-gradient); box-shadow: 0 0 0 1.5px var(--ink);
+}
+/* D115: a night trade's hours after 17:00, a light lime wash under the busiest band */
+.hour-evening { position: absolute; top: calc(-3px * var(--grow)); bottom: calc(-3px * var(--grow)); background: var(--brand-soft); box-shadow: inset 0 0 0 1px var(--brand-line); }
+.hour-ticks { position: relative; height: 1.4em; font-size: var(--text-xs); color: var(--secondary); font-variant-numeric: tabular-nums; }
+.hour-ticks span { position: absolute; top: 0; white-space: nowrap; }
+.pie { display: block; width: calc(64px * var(--grow)); height: calc(64px * var(--grow)); }
+.share-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 2px 14px; margin: 6px 0 0; padding: 0; list-style: none; }
+.share-list li { display: flex; justify-content: space-between; gap: 6px; }
+.share-list li.top, .share-list b { color: var(--text); }
+.share-list li.top { font-weight: 700; }
+@media (prefers-reduced-motion: no-preference) {
+  .pair-bars i, .houses, .pie, .hour-track, .hour-top { transition: height 0.2s ease, width 0.2s ease, max-width 0.2s ease; }
+}
+/* D113: the step-by-step story's last step, the ask and its caveat, closes the report */
+.report-ask {
+  margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--ink); background: var(--ground);
+  font-size: var(--text-sm); line-height: 1.55; color: var(--secondary);
+}
+.report-ask b { display: block; margin-bottom: 4px; color: var(--text); font-weight: 700; }
 .pick-trade-lead { margin: 16px 0 0; font-size: var(--text-md); font-weight: 700; }
 .verdict-reason { margin: 0 0 8px; font-size: var(--text-sm); color: var(--secondary); line-height: 1.5; }   /* D81 */
 

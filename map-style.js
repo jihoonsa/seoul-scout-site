@@ -6,9 +6,10 @@ export const TINT_BEFORE = "landcover";        // neighborhood tints sit under p
 export const OUTLINE_BEFORE = "label-water";   // neighborhood outlines sit under every label
 export const DOTS_BEFORE = "stations-dot";     // store dots sit under the station labels
 
-// The ink atlas (D75, design/DESIGN.md): white land on a neutral ground, light blue water, dotted parks, no yellow roads
+// The ink atlas (D75, design/DESIGN.md): white land on a neutral ground, hatched grey water, dotted parks, no yellow
+// roads. D111: the water is a cool grey, since blue now means the map views' data; its hatch still says "water".
 const COLORS = {
-  outside: "#f4f5f3", land: "#ffffff", water: "#dbe9f6", waterLine: "#7fa3c4", waterText: "#3f6a8f", green: "#eef2ec",
+  outside: "#f4f5f3", land: "#ffffff", water: "#e9ebee", waterLine: "#a9b0b8", waterText: "#5b6470", green: "#eef2ec",
   road: "#ffffff", roadCasing: "#e4e5e1", highway: "#ffffff", highwayCasing: "#cfd1cc", rail: "#c9cbc6",
   building: "#f1f2ef", buildingLine: "#e3e4e0", text: "#6a6d71", textStrong: "#3a3c3f", halo: "#ffffff",
 };
@@ -21,7 +22,7 @@ export function waterHatchImage() {
   const paint = (row, [r, g, b]) => {
     for (let x = 0; x < size; x++) data.set([r, g, b, 255], (row * size + x) * 4);
   };
-  for (let row = 0; row < size; row++) paint(row, row === 4 || row === 5 ? [0xbd, 0xd4, 0xec] : [0xdb, 0xe9, 0xf6]);
+  for (let row = 0; row < size; row++) paint(row, row === 4 || row === 5 ? [0xd5, 0xd9, 0xde] : [0xe9, 0xeb, 0xee]);
   return { width: size, height: size, data };
 }
 
@@ -33,7 +34,7 @@ export function parkDotsImage() {
   return { width: size, height: size, data };
 }
 // D84.1: what a place looks like, in muted neutrals under every tint (not zoning, no beige, and not the service green).
-// D94: parks and woods (dotted gray-green) and water (light blue) are drawn over the tints, as places with no shops.
+// D94: parks and woods (dotted gray-green) and water (hatched grey, D111) are drawn over the tints, as places with no shops.
 // OpenStreetMap in Seoul marks homes well (most apartment blocks), shops and factories only in part.
 const LAND_USE = [
   { kinds: ["residential"], color: "#f1f2ef" },                         // apartment blocks and houses
