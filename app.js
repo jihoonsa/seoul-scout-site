@@ -16,7 +16,7 @@ import {
 import { CRITERIA, findMatches, wishlistReferences } from "./wishlist.js";
 import { initPanel, renderPanelLabels, showPanel } from "./panel.js";
 import { bindMenu, closeMenu, closeOpenMenu } from "./bar-menu.js";
-import { holdCamera } from "./area-hold.js";
+import { centredBounds, holdCamera } from "./area-hold.js";
 import { tradeIcon } from "./icons.js";
 import { closeTour, showTourStep } from "./tour.js";
 import { GROUP_COLORS, addMarkerImages, kindIconKey, markerSvg } from "./shop-markers.js";
@@ -101,7 +101,6 @@ const LAYERS = {
   customers: { label: () => directed(t("layerCustomers"), "more"), color: COLORS.map, customersOnly: true, value: customerValue },
 };
 const OPACITY_STEPS = [0.1, 0.25, 0.4, 0.55, 0.72];             // 5 quantile classes, light to strong (D80: wider apart)
-const MIN_HEADLINE_WIDTH = 260;                                   // narrower than this, the map headline folds short (desktop)
 
 // "Rent" -> "Rent (darker = cheaper)"
 function directed(label, word) {
@@ -112,6 +111,7 @@ const state = {
   map: null, data: null, meta: null, dots: null,
   dongIndex: new Map(),         // dong code -> feature id in the "dongs" source
   bboxes: new Map(),            // dong code -> [west, south, east, north]
+  fitBoxes: new Map(),          // dong code -> the box an opened area is fitted to, centred on the area (centredBounds)
   pins: [],                     // neighborhood name pins on the map
   card: null,                   // the building whose card is open
   zoomBand: 0,                  // see zoomBand()
@@ -318,31 +318,23 @@ function bindMapEvents() {
   });
   map.on("moveend", refreshDots);
   map.on("moveend", declutterPins);   // after a zoom or a pan: overlaps and pins by the panel's edge change
-  map.on("resize", placeMapHeadline);   // the map's box follows the window and the panel's width (style.css --map-right)
-  map.on("resize", refitHold);
+  map.on("resize", refitHold);   // the map's box follows the window and the panel's width (style.css --map-right)
   map.on("zoom", renderZoomButtons);
   map.on("mousemove", handlePointerMove);
   map.getCanvas().addEventListener("mouseleave", () => { setHovered(null); document.getElementById("tooltip").hidden = true; });
   map.on("click", handleClick);
 }
 
-// Room left on the map's own box for what floats over it: the map headline at the top (D103), the zoom buttons and
-// "서울 전체" on the right, the map's bottom corner boxes (or the phone sheet) at the bottom
+// Room left on the map's own box for what floats over it: the zoom hint at the top, the zoom buttons and "서울 전체"
+// on the right, the map's bottom corner boxes (or the phone sheet) at the bottom
 function mapPadding() {
   const wide = window.innerWidth > NARROW_WIDTH;
-  const padding = { top: Math.max(40, headlineBottom() + 16), right: 80, bottom: wide ? 80 : phoneSheetRestHeight() + 24, left: 24 };
+  const padding = { top: 40, right: 80, bottom: wide ? 80 : phoneSheetRestHeight() + 24, left: 24 };
   // Never leave less than 120 px of map: MapLibre refuses to fit into nothing
   const { clientWidth: width, clientHeight: height } = state.map.getContainer();
   const shrink = (a, b, size) => Math.min(1, (size - 120) / (padding[a] + padding[b]));
   const vertical = shrink("top", "bottom", height), horizontal = shrink("left", "right", width);
   return { top: padding.top * vertical, bottom: padding.bottom * vertical, left: padding.left * horizontal, right: padding.right * horizontal };
-}
-
-// Where the map headline ends over the map; 0 when it is hidden
-function headlineBottom() {
-  const box = document.getElementById("map-headline");
-  if (box.hidden) return 0;
-  return box.getBoundingClientRect().bottom - state.map.getContainer().getBoundingClientRect().top;
 }
 
 // The phone sheet's height once it settles at its stop: it slides between stops, so measuring it mid-slide
@@ -377,7 +369,7 @@ function holdArea(dong, { fit = true, animate = true } = {}) {
   map.stop();          // so an earlier move's moveend fires now, not after this fit has started
   map.setMinZoom(MIN_ZOOM);
   map.setMaxBounds(PAN_LIMITS);
-  const camera = holdCamera(map, state.bboxes.get(dong.code));
+  const camera = holdCamera(map, state.fitBoxes.get(dong.code));
   const hold = { code: dong.code, zoom: camera.zoom, applied: false };
   state.hold = hold;
   const apply = () => {
@@ -418,7 +410,7 @@ function refitHold() {
   }
   const map = state.map;
   const atFit = map.getZoom() <= hold.zoom + 0.01;
-  const camera = holdCamera(map, state.bboxes.get(hold.code));
+  const camera = holdCamera(map, state.fitBoxes.get(hold.code));
   hold.zoom = camera.zoom;
   setHoldLimits(camera);   // before the jump: the old lowest zoom would stop a smaller box's fit
   if (atFit) map.jumpTo({ center: camera.center, zoom: camera.zoom });
@@ -444,6 +436,7 @@ function drawNeighborhoods() {
     const points = dong.polygons.flat(2);
     const lats = points.map((p) => p[0]), lngs = points.map((p) => p[1]);
     state.bboxes.set(dong.code, [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)]);
+    state.fitBoxes.set(dong.code, centredBounds(dong.polygons));
     const coordinates = dong.polygons.map((rings) => rings.map((ring) => ring.map(([lat, lng]) => [lng, lat])));
     return { type: "Feature", id: index, properties: { code: dong.code }, geometry: { type: "MultiPolygon", coordinates } };
   });
@@ -1050,10 +1043,7 @@ function renderDotControls() {
   document.getElementById("zoom-hint").hidden = state.dots.streetLevel;
   const filters = document.getElementById("dot-filters");   // in the map view menu
   filters.hidden = !state.dots.streetLevel;
-  if (filters.hidden) {
-    placeMapHeadline();   // the zoom hint came back: the headline's room changed
-    return;
-  }
+  if (filters.hidden) return;
   let groupChips = "";
   if (active) {
     const chips = state.meta.groups.map((group, index) => {
@@ -1077,7 +1067,6 @@ function renderDotControls() {
     });
   }
   bindExtraKinds(filters);
-  placeMapHeadline();   // the zoom hint went: the headline's room changed
 }
 
 // "같이 볼 가게": the picked kinds as chips (tap to remove) and a search box for up to 3
@@ -2514,7 +2503,6 @@ function renderMapHeadline() {
     box.querySelector("#mh-more").addEventListener("click", toggleMapHeadline);
     box.querySelector("#mh-guide").addEventListener("click", openReadingGuide);
   }
-  placeMapHeadline();
 }
 
 function toggleMapHeadline() {
@@ -2602,26 +2590,6 @@ function tenthsText(value, values, lowerIsBetter, key) {
   const better = betterThanTenths(value, values, lowerIsBetter);
   const worse = betterThanTenths(value, values, !lowerIsBetter);
   return better >= worse ? t("mhTenths", better, t("mhBetter")[key]) : t("mhTenths", worse, t("mhWorse")[key]);
-}
-
-// Desktop: centred at the top of the map's box, right of the top-left corner's pills and left of the panel's fold
-// button, never over them; with too little room there, folded short like on phones (D103). Phones: style.css.
-function placeMapHeadline() {
-  const box = document.getElementById("map-headline");
-  if (window.innerWidth <= NARROW_WIDTH) {
-    box.classList.remove("short");
-    box.style.left = box.style.right = "";
-    return;
-  }
-  const map = state.map.getContainer().getBoundingClientRect();
-  const cornerEdges = [...document.querySelectorAll(".map-corner.top-left > *")]
-    .map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0).map((rect) => rect.right + 12);
-  const left = Math.max(map.left + 12, ...cornerEdges);
-  const fold = document.getElementById("panel-fold").getBoundingClientRect();   // it sits over the map's top right
-  const right = Math.min(map.right, fold.width ? fold.left : map.right) - 12;
-  box.classList.toggle("short", right - left < MIN_HEADLINE_WIDTH);
-  box.style.left = `${left}px`;
-  box.style.right = `${window.innerWidth - right}px`;
 }
 
 function openReadingGuide() {

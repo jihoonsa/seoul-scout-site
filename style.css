@@ -437,12 +437,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
 .menu-item.on::after { content: " ✓"; color: var(--brand-text); }
 /* The legend: a sentence, the colours the map draws, a few words under them (D69) */
 .legend-title { margin: 0 0 8px; color: var(--text); font-weight: 600; }
-/* The map headline (D95): the finding in bold, then the colour bar with its two ends, then the chosen area */
-.map-headline { z-index: 4; top: 16px; max-width: 640px; padding: 12px 14px; font-size: var(--text-sm); color: var(--secondary); }
-/* too narrow over the map (desktop): folded like on phones */
-.map-headline.short:not(.open) .mh-rest { display: none; }
-.map-headline.short .mh-more { display: inline-grid; }
-.map-headline.short.open .mh-more { transform: rotate(180deg); }
+/* The map headline (D95): the finding in bold, then the colour bar with its two ends, then the chosen area. It is the
+   panel's first block, off the map, parted from the report by a rule (D127) */
+.map-headline { margin: 0 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--ink); font-size: var(--text-sm); color: var(--secondary); }
 .mh-top { display: flex; align-items: flex-start; gap: 8px; }
 .mh-finding { flex: 1; margin: 0; font-size: var(--text-md); font-weight: 700; line-height: 1.35; color: var(--text); }
 .mh-more { display: none; flex: none; place-items: center; width: 32px; height: 32px; border: 1px solid var(--ink); border-radius: var(--radius); background: #fff; font-size: 16px; }
@@ -852,7 +849,6 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
   .map { top: var(--bar-height); right: var(--map-right); }
   /* the tooltip and the store card are placed in the map's own pixels (app.js), so they start where the map starts */
   .tooltip, .store-card { top: var(--bar-height); }
-  .map-headline { top: calc(var(--bar-height) + 12px); width: fit-content; margin-inline: auto; }
 
   /* The map's corners: top left the zoom hint and the loading pill, bottom left the shop key and the time strip */
   .map-corner {
@@ -926,17 +922,13 @@ button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:foc
     border: 0; background: #fff; padding: 0; touch-action: none; cursor: grab;
   }
   .sheet-handle span { display: block; width: 40px; height: 4px; margin: 0 auto; border-radius: 999px; background: var(--ink); }
-  /* the map headline: its finding only, until ⌄ opens how to read it (D95) */
-  .map-headline { left: 8px; right: 8px; max-width: 440px; padding: 8px 10px; }
+  /* the map headline, at the sheet's top: its finding only, until ⌄ opens how to read it (D95, D127) */
   .map-headline:not(.open) .mh-rest { display: none; }
   .mh-more { display: inline-grid; }
   .map-headline.open .mh-more { transform: rotate(180deg); }
-  /* opened: it scrolls above the sheet, and the map's other controls step aside until ⌄ folds it again */
-  .map-headline { max-height: calc(100dvh - var(--sheet-stop) - 88px); overflow-y: auto; }
-  .app:has(.map-headline.open) :is(.zoom-controls, .map-corner, .hint-pill) { display: none; }
   .zoom-controls, .app.sheet-tall .zoom-controls { right: 8px; bottom: calc(var(--sheet-stop) + 8px); }
   /* nearly full, the report is the screen: the map's floating controls step aside until the sheet comes down */
-  .app:has(.sheet.expanded) :is(.zoom-controls, .map-corner, .hint-pill, .map-headline) { display: none; }
+  .app:has(.sheet.expanded) :is(.zoom-controls, .map-corner, .hint-pill) { display: none; }
   .zoom-controls #zoom-in, .zoom-controls #zoom-out { display: none; }   /* phones pinch to zoom */
   .zoom-controls .seoul-all { width: auto; height: 44px; padding: 0 12px; }
   #zoom-hint { display: none !important; }   /* pinch-to-zoom is natural on phones */

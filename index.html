@@ -50,8 +50,6 @@
     <div id="map" class="map" aria-label="Map of Seoul"></div>
     <div id="tooltip" class="tooltip" hidden></div>
     <div id="store-card" class="store-card" role="dialog" hidden></div>
-    <!-- On top of the map's free area: what the colour shows, how to read it, where the chosen area stands (D95) -->
-    <div id="map-headline" class="card map-headline" aria-live="polite" hidden></div>
 
     <!-- The map's corners: top left the zoom hint and the loading pill; bottom left the shop key, then the time strip -->
     <div class="map-corner top-left">
@@ -70,6 +68,8 @@
       <button type="button" id="panel-fold" class="panel-fold" aria-expanded="true"></button>
       <aside id="sheet" class="card sheet" aria-live="polite">
         <button type="button" class="sheet-handle" id="sheet-toggle" aria-label="expand"><span></span></button>
+        <!-- The panel's first block, off the map (D127): what the colour shows, how to read it, where the chosen area stands (D95) -->
+        <div id="map-headline" class="map-headline" aria-live="polite" hidden></div>
         <div id="sheet-body"></div>
         <p class="sources" id="sources"></p>
       </aside>
