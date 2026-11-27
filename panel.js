@@ -7,7 +7,7 @@ export const PANEL_STEP = 0.05;             // one arrow-key press
 export const PANEL_KEY = "seoulScout.panelWidth";
 const SMALLEST = 0.25, WIDEST = 0.70;       // the user's choice is kept between these
 const MIN_PX = 320;                         // narrower than this the report boxes get cramped
-// Left of the panel: 16 + 360 (search and layer cards) + 16; right of the free map: 16 + 56 (zoom) + 12 + 24 (credit) + 16
+// The room the map keeps left of the panel, however wide the panel is dragged
 const KEEP_FREE_PX = 520;
 
 let chosen = PANEL_DEFAULT;                 // the user's last choice, before fitting it to this window
@@ -61,20 +61,6 @@ function setFolded(folded) {
   notifyChange();
 }
 
-// The left column (search, trade, map view) folds the same way, into one button (D83)
-function isLeftFolded() {
-  return document.querySelector(".app").classList.contains("left-folded");
-}
-
-function setLeftFolded(folded) {
-  document.querySelector(".app").classList.toggle("left-folded", folded);
-  renderPanelLabels();
-}
-
-export function showLeftColumn() {
-  if (isLeftFolded()) setLeftFolded(false);
-}
-
 export function showPanel() {
   if (isFolded()) setFolded(false);
 }
@@ -86,11 +72,6 @@ export function renderPanelLabels() {
   fold.setAttribute("aria-label", folded ? t("panelShow") : t("panelHide"));
   fold.setAttribute("aria-expanded", String(!folded));
   document.getElementById("panel-handle").setAttribute("aria-label", t("panelResize"));
-  const leftFold = document.getElementById("left-fold");
-  const leftFolded = isLeftFolded();
-  leftFold.textContent = leftFolded ? t("leftShow") : "‹";
-  leftFold.setAttribute("aria-label", leftFolded ? t("leftShow") : t("leftHide"));
-  leftFold.setAttribute("aria-expanded", String(!leftFolded));
 }
 
 function bindHandle(handle) {
@@ -127,7 +108,6 @@ export function initPanel(onChange) {
   chosen = readStoredFraction();
   bindHandle(document.getElementById("panel-handle"));
   document.getElementById("panel-fold").addEventListener("click", () => setFolded(!isFolded()));
-  document.getElementById("left-fold").addEventListener("click", () => setLeftFolded(!isLeftFolded()));
   window.addEventListener("resize", applyWidth);
   renderPanelLabels();
   applyWidth();

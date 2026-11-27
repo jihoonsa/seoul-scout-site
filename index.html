@@ -14,46 +14,53 @@
 </head>
 <body>
   <div class="app">
+    <!-- The top bar, across the whole window: brand, search, the trade menu and the customer map, then compare, the
+         map view menu, language and help (top bar design 5.2). Each menu drops down under its button (bar-menu.js). -->
+    <header id="top-bar" class="top-bar">
+      <div class="brand-mark">
+        <img class="mark" src="mark.svg" alt="" width="28" height="28">
+        <p class="brand">Seoul Scout</p>
+      </div>
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="7.5" cy="7.5" r="5.25"/><path d="M11.5 11.5l4.5 4.5"/></svg></span>
+        <input id="search" type="search" autocomplete="off" aria-label="search">
+        <ul id="search-results" class="search-results" hidden></ul>
+      </div>
+      <div class="bar-item">
+        <button type="button" id="trade-menu-button" class="bar-button trade-menu-button" aria-haspopup="menu"
+                aria-controls="trade-menu-list" disabled></button>
+        <div id="trade-menu-list" class="bar-menu trade-menu" role="menu" hidden></div>
+      </div>
+      <button type="button" id="customers-open" class="text-button customers-open" aria-pressed="false"></button>
+      <span class="bar-spacer"></span>
+      <button type="button" id="compare-open" class="compare-open" hidden></button>
+      <div class="bar-item">
+        <button type="button" id="layer-toggle" class="layer-button" aria-haspopup="menu" aria-controls="layer-menu"></button>
+        <!-- The map views; from zoom 14 the shop controls; with an area open below zoom 14, a note to zoom in -->
+        <div id="layer-menu" class="bar-menu layer-menu" hidden>
+          <div id="layer-options" class="layer-options" role="menu"></div>
+          <div id="dot-filters" class="dot-filters" hidden></div>
+          <p id="layer-zoom-note" class="layer-zoom-note" hidden></p>
+        </div>
+      </div>
+      <button type="button" class="pill-button" id="language">EN</button>
+      <button type="button" class="pill-button help-button" id="help">?</button>
+    </header>
+
     <div id="map" class="map" aria-label="Map of Seoul"></div>
     <div id="tooltip" class="tooltip" hidden></div>
     <div id="store-card" class="store-card" role="dialog" hidden></div>
     <!-- On top of the map's free area: what the colour shows, how to read it, where the chosen area stands (D95) -->
     <div id="map-headline" class="card map-headline" aria-live="polite" hidden></div>
 
-    <!-- Left column (desktop): everything that floats over the map stacks here, so a wide panel never covers it.
-         On phones the column is display: contents and each item keeps its own place. -->
-    <div class="left-column">
-      <!-- Desktop: folds the whole column into this one button (D83) -->
-      <button type="button" id="left-fold" class="left-fold" aria-expanded="true"></button>
-      <!-- Top left: brand, search, the trade question -->
-      <section id="top-card" class="card top-card">
-        <header class="brand-row">
-          <div class="brand-mark">
-            <img class="mark" src="mark.svg" alt="" width="38" height="38">
-            <div>
-              <p class="brand">Seoul Scout</p>
-              <p class="tagline" id="tagline"></p>
-            </div>
-          </div>
-          <div class="top-buttons">
-            <button type="button" class="pill-button" id="language">EN</button>
-            <button type="button" class="pill-button help-button" id="help">?</button>
-          </div>
-        </header>
-        <div class="search-box">
-          <span class="search-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="7.5" cy="7.5" r="5.25"/><path d="M11.5 11.5l4.5 4.5"/></svg></span>
-          <input id="search" type="search" autocomplete="off" aria-label="search">
-          <ul id="search-results" class="search-results" hidden></ul>
-        </div>
-        <div id="trade-step" class="trade-step"></div>
-      </section>
-      <button type="button" id="compare-open" class="compare-open" hidden></button>
-      <!-- Store dot filters, or a hint to zoom in -->
+    <!-- The map's corners: top left the zoom hint and the loading pill; bottom left the shop key, then the time strip -->
+    <div class="map-corner top-left">
       <div id="zoom-hint" class="hint-pill"></div>
       <div id="dots-loading" class="hint-pill loading" hidden></div>
-      <div id="dot-filters" class="card dot-filters" hidden></div>
-      <!-- Bottom left: map view (layers, time slider, legend) -->
-      <div id="layer-control" class="card layer-control"></div>
+    </div>
+    <div class="map-corner bottom-left">
+      <div id="shop-key" class="card" hidden></div>
+      <div id="time-strip" class="card" hidden></div>
     </div>
 
     <!-- Right (bottom on phones): the answer. On desktop it can be resized with the handle and folded (panel.js). -->

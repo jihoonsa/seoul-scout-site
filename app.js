@@ -14,7 +14,9 @@ import {
   SURVIVAL_YEARS, TYPICAL_AREA_M2, WALK_RADIUS_M, circlePolygon, gapSpreadByTrade, simulateOpening,
 } from "./simulation.js";
 import { CRITERIA, findMatches, wishlistReferences } from "./wishlist.js";
-import { initPanel, renderPanelLabels, showLeftColumn, showPanel } from "./panel.js";
+import { initPanel, renderPanelLabels, showPanel } from "./panel.js";
+import { bindMenu, closeMenu, closeOpenMenu } from "./bar-menu.js";
+import { holdCamera } from "./area-hold.js";
 import { tradeIcon } from "./icons.js";
 import { closeTour, showTourStep } from "./tour.js";
 import { GROUP_COLORS, addMarkerImages, kindIconKey, markerSvg } from "./shop-markers.js";
@@ -32,7 +34,6 @@ import {
 const RENT_FAR_KM = 2;            // beyond this the nearest rent survey says little about the neighborhood (D44)
 const MAX_COMPARED = 3;
 const PLAY_STEP_MS = 700;
-const CLOSEST_FIT_ZOOM = 15.5;    // when fitting a small neighborhood, do not zoom in closer than this
 // The tour (spec 5.7): step 1 is the welcome, steps 2 to 5 point at the real screen. Steps 4 and 5 open the spec's own
 // honest example, 용답동 제과점: a gap whose 신호 세기 is 약함 (spec 5.4).
 const TOUR_STEPS = 5;
@@ -49,6 +50,7 @@ const MAP_LIMITS = [[126.3, 37.15], [127.65, 37.98]];             // the base ma
 // How far the map may pan: the base map plus some plain ground to the south, so on a phone Seoul can rise into
 // the strip above the bottom sheet (only the sheet ever sits over that ground)
 const PAN_LIMITS = [[126.3, 36.75], [127.65, 37.98]];
+const MIN_ZOOM = 9;               // the lowest zoom with no area held (all of Seoul and the land around it)
 const BASEMAP = "data/seoul.pmtiles";
 const KOREAN_FONT = "'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif";
 const NARROW_WIDTH = 900;        // px: below this the answer panel becomes a bottom sheet (same as style.css)
@@ -71,6 +73,11 @@ const FOCUS_MASK_OPACITY = 0.95;  // D112: while an area is open the rest of the
 // Two stacked sheets, drawn like the search box's magnifier (index.html): line icons, not text glyphs (round 4)
 const LAYERS_ICON = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round">`
   + `<path d="M9 2.5 16 6.25 9 10 2 6.25Z"/><path d="M2 9.75 9 13.5l7-3.75"/></svg>`;
+// The menu buttons' chevron; it turns while the menu is open (style.css)
+const CHEVRON_ICON = `<span class="layer-chevron" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" `
+  + `stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg></span>`;
+// The trade menu's three columns (top bar design 5.2); each trade's group is in store_meta.json trade_groups
+const TRADE_GROUPS = ["food", "beauty", "daily"];
 
 // Map views: what the neighborhoods are tinted by. Tints sit under the roads and labels, so the map stays readable.
 // D111 (team note): every view tints in one sky blue (it was D94's green), and darker is always better for a founder:
@@ -94,7 +101,7 @@ const LAYERS = {
   customers: { label: () => directed(t("layerCustomers"), "more"), color: COLORS.map, customersOnly: true, value: customerValue },
 };
 const OPACITY_STEPS = [0.1, 0.25, 0.4, 0.55, 0.72];             // 5 quantile classes, light to strong (D80: wider apart)
-const MIN_HEADLINE_WIDTH = 260;                                   // narrower than this, the map headline docks (desktop)
+const MIN_HEADLINE_WIDTH = 260;                                   // narrower than this, the map headline folds short (desktop)
 
 // "Rent" -> "Rent (darker = cheaper)"
 function directed(label, word) {
@@ -112,7 +119,6 @@ const state = {
   addresses: null,              // promise of the address search index, loaded on first use
   trade: "", selected: null, hovered: null, compared: [],
   layer: "none", dayType: "weekday", hour: 13, playing: null, breaks: null,   // D80: a plain map until something is chosen
-  browsing: false,             // "그냥 둘러볼게요": trade question folded away
   overview: null,              // gaps and suggestions for all trades (summarizeSuggestions)
   medians: {},                 // trade -> Seoul medians { sales, close }
   gapSpread: {},               // trade -> spread of its gap score (for the simulation)
@@ -124,6 +130,8 @@ const state = {
   customers: null,             // the customer map's choices { who, when, narrow, name } while it is open, else null
   customerData: null,          // promise of customers.json as { byCode, refs } (loadCustomerData)
   customerTable: null,         // the same, once loaded
+  hold: null,                  // the open area held in view (holdArea): { code, zoom: its fitted zoom, applied }, else null
+  fitOnOpen: true,             // the next area opened is fitted to the map (false: an address search keeps the camera)
 };
 
 start();
@@ -163,7 +171,6 @@ async function start() {
     addFocusLayers();
     bindMapEvents();
     bindControls();
-    watchTopCard();
     const customerMode = settings.mode === "customers";   // a customer map link has no trade
     state.extraKinds = kindsFromLink(settings.also, state.meta, customerMode ? "" : settings.trade);   // before chooseTrade, which writes the link
     state.dots.setExtraKinds(state.extraKinds);
@@ -174,7 +181,7 @@ async function start() {
     if (customerMode) await openCustomers(settings);
     renderAll();
     fitSeoul({ animate: false });
-    if (linked) selectDong(linked, { zoom: true });
+    if (linked) selectDong(linked);
     if (!readWelcomed()) openHelp("welcome");
   } catch (error) {
     showError(t("mapError", error.message));
@@ -228,6 +235,7 @@ function prepareReferences() {
   state.middleRent = median(dongs.filter((d) => d.info.rent_area_km <= RENT_FAR_KM).map((d) => d.kpi.rent_small_shop));
   state.gapSpread = gapSpreadByTrade(dongs, trades);
   state.wishRefs = wishlistReferences(dongs);
+  state.spendingUsual = Object.fromEntries(SPENDING_KINDS.map((kind) => [kind, median(dongs.map((d) => d.spending[kind]))]));
   state.overview = summarizeSuggestions();
 }
 
@@ -279,7 +287,7 @@ async function createMap() {
   state.map = new maplibregl.Map({
     container: "map",
     style: baseStyle(getLanguage(), `pmtiles://${new URL(BASEMAP, location.href).href}`),
-    bounds: [[west, south], [east, north]], maxBounds: PAN_LIMITS, minZoom: 9, maxZoom: 19,
+    bounds: [[west, south], [east, north]], maxBounds: PAN_LIMITS, minZoom: MIN_ZOOM, maxZoom: 19,
     dragRotate: false, pitchWithRotate: false, touchPitch: false,
     attributionControl: { compact: true },
     localIdeographFontFamily: KOREAN_FONT,      // Korean labels are drawn with the page font
@@ -310,19 +318,19 @@ function bindMapEvents() {
   });
   map.on("moveend", refreshDots);
   map.on("moveend", declutterPins);   // after a zoom or a pan: overlaps and pins by the panel's edge change
+  map.on("resize", placeMapHeadline);   // the map's box follows the window and the panel's width (style.css --map-right)
+  map.on("resize", refitHold);
+  map.on("zoom", renderZoomButtons);
   map.on("mousemove", handlePointerMove);
   map.getCanvas().addEventListener("mouseleave", () => { setHovered(null); document.getElementById("tooltip").hidden = true; });
   map.on("click", handleClick);
 }
 
-// Space taken by the floating cards, so the map fits Seoul or a neighborhood into the free area
+// Room left on the map's own box for what floats over it: the map headline at the top (D103), the zoom buttons and
+// "서울 전체" on the right, the map's bottom corner boxes (or the phone sheet) at the bottom
 function mapPadding() {
   const wide = window.innerWidth > NARROW_WIDTH;
-  const card = document.getElementById("top-card").getBoundingClientRect();
-  const sheet = document.getElementById("sheet").getBoundingClientRect();
-  const top = Math.max(wide ? 40 : card.height + 24, headlineBottom() + 16);   // below the map headline (D103)
-  const padding = wide ? { top, right: sheet.width + 40, bottom: 80, left: card.width + 40 }
-                       : { top, right: 24, bottom: phoneSheetRestHeight() + 24, left: 24 };
+  const padding = { top: Math.max(40, headlineBottom() + 16), right: 80, bottom: wide ? 80 : phoneSheetRestHeight() + 24, left: 24 };
   // Never leave less than 120 px of map: MapLibre refuses to fit into nothing
   const { clientWidth: width, clientHeight: height } = state.map.getContainer();
   const shrink = (a, b, size) => Math.min(1, (size - 120) / (padding[a] + padding[b]));
@@ -330,10 +338,10 @@ function mapPadding() {
   return { top: padding.top * vertical, bottom: padding.bottom * vertical, left: padding.left * horizontal, right: padding.right * horizontal };
 }
 
-// Where the map headline ends over the map; 0 when it is hidden or docked in the left column (the left padding covers it)
+// Where the map headline ends over the map; 0 when it is hidden
 function headlineBottom() {
   const box = document.getElementById("map-headline");
-  if (box.hidden || box.classList.contains("docked")) return 0;
+  if (box.hidden) return 0;
   return box.getBoundingClientRect().bottom - state.map.getContainer().getBoundingClientRect().top;
 }
 
@@ -352,12 +360,78 @@ function freeAreaOffset() {
   return [(padding.left - padding.right) / 2, (padding.top - padding.bottom) / 2];
 }
 
-function fitBounds([west, south, east, north], { maxZoom = 19, animate = true } = {}) {
-  state.map.fitBounds([[west, south], [east, north]], { padding: mapPadding(), maxZoom, animate, duration: animate ? 700 : 0 });
+function fitBounds([west, south, east, north], { animate = true } = {}) {
+  state.map.fitBounds([[west, south], [east, north]], { padding: mapPadding(), animate, duration: animate ? 700 : 0 });
 }
 
 function fitSeoul({ animate = true } = {}) {
   fitBounds(SEOUL_BOUNDS, { animate });
+}
+
+// Spec 5.4: an opened area fills the map's box and is held there. Once the fit lands, the lowest zoom is the fitted
+// zoom and the pan limit the fitted view grown by a quarter (area-hold.js). Without fit (an address search) the
+// camera stays where it is and only the limits are set.
+function holdArea(dong, { fit = true, animate = true } = {}) {
+  const map = state.map;
+  state.hold = null;   // first: the moveend that map.stop() fires must not apply an earlier hold
+  map.stop();          // so an earlier move's moveend fires now, not after this fit has started
+  map.setMinZoom(MIN_ZOOM);
+  map.setMaxBounds(PAN_LIMITS);
+  const camera = holdCamera(map, state.bboxes.get(dong.code));
+  const hold = { code: dong.code, zoom: camera.zoom, applied: false };
+  state.hold = hold;
+  const apply = () => {
+    if (state.hold !== hold) return;   // lifted, or moved to another area, before the fit landed
+    setHoldLimits(camera);
+    hold.applied = true;
+    renderZoomButtons();
+  };
+  if (!fit) {
+    apply();
+    return;
+  }
+  map.once("moveend", apply);
+  const still = !animate || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  map.easeTo({ center: camera.center, zoom: camera.zoom, duration: still ? 0 : 700 });
+}
+
+function setHoldLimits(camera) {
+  state.map.setMinZoom(camera.zoom);
+  state.map.setMaxBounds(camera.bounds);
+}
+
+function liftHold() {
+  state.hold = null;
+  state.map.setMaxBounds(PAN_LIMITS);
+  state.map.setMinZoom(MIN_ZOOM);
+  renderZoomButtons();
+}
+
+// The map's box changed size (the window, a panel drag, a fold): the hold is worked out again for the new box. At the
+// fit the area is fitted again; zoomed in past it, the camera stays and is only pulled inside the new limits.
+function refitHold() {
+  const hold = state.hold;
+  if (!hold) return;
+  if (!hold.applied) {
+    holdArea(state.selected);   // the fit is still on its way: aim it at the new box
+    return;
+  }
+  const map = state.map;
+  const atFit = map.getZoom() <= hold.zoom + 0.01;
+  const camera = holdCamera(map, state.bboxes.get(hold.code));
+  hold.zoom = camera.zoom;
+  setHoldLimits(camera);   // before the jump: the old lowest zoom would stop a smaller box's fit
+  if (atFit) map.jumpTo({ center: camera.center, zoom: camera.zoom });
+  renderZoomButtons();
+}
+
+// "−" looks disabled at the lowest zoom: the fit while an area is held
+function renderZoomButtons() {
+  const map = state.map;
+  const atLimit = map.getZoom() <= map.getMinZoom() + 0.01;
+  const zoomOut = document.getElementById("zoom-out");
+  zoomOut.classList.toggle("at-limit", atLimit);
+  zoomOut.setAttribute("aria-disabled", String(atLimit));
 }
 
 // ---------------------------------------------------------------------------
@@ -480,8 +554,14 @@ function syncFocus() {
   const code = isFocused() ? state.selected.code : null;
   if (!map?.getSource("focus-mask")) return;
   if (!state.selected && !state.focusCode) state.focusReturn = null;   // left from a simulation, where the cover was already off
-  if (code === state.focusCode) return;
+  // kept before the hold moves the camera: with reduced motion its fit lands at once
   if (code && !state.focusReturn) state.focusReturn = { center: map.getCenter(), zoom: map.getZoom() };
+  if (state.hold && state.hold.code !== code) liftHold();   // leaving, another area, or a simulation (code is null)
+  if (code && !state.hold) {
+    holdArea(state.selected, { fit: state.fitOnOpen });
+    state.fitOnOpen = true;
+  }
+  if (code === state.focusCode) return;
   const back = !state.selected ? state.focusReturn : null;
   state.focusCode = code;
   if (code) stopPlaying();   // the pause button hides with the map views, and each step would redraw the report
@@ -639,7 +719,7 @@ function drawPins() {
     // live in the list and the report, said in words ("12곳 · 사람 수로 보면 보통 37곳")
     button.innerHTML = `<span class="pin-dot" aria-hidden="true"></span><span class="pin-rank">${pinRank(index + 1)}</span>`
       + `<span class="pin-name">${escapeHtml(placeName(dong))}${strong ? '<span class="pin-star" aria-hidden="true">★</span>' : ""}</span>`;
-    button.addEventListener("click", (event) => { event.stopPropagation(); selectDong(dong, { zoom: true }); });
+    button.addEventListener("click", (event) => { event.stopPropagation(); selectDong(dong); });
     const holder = document.createElement("div");
     holder.appendChild(button);
     const pin = new maplibregl.Marker({ element: holder, anchor: "left", offset: [-8, 0] })
@@ -673,8 +753,8 @@ function overlaps(a, b) {
 // A pin that would cover a more important one first drops its name box (the name stays for screen readers; style.css
 // .pin.compact), then tries its rank on the dot's other side, above the dot and below it. A rank is never hidden
 // (round 5: hidden ranks left gaps in the numbering): a dot on almost the same spot as a placed one adds its rank to that
-// pin's ("05·06"); otherwise it keeps its last try, drawn under the higher ranks. A pin whose dot sits under the left
-// column or the panel, or off the screen, is not drawn (rounds 5 and 6: a name peeked out beside them).
+// pin's ("05·06"); otherwise it keeps its last try, drawn under the higher ranks. A pin whose dot sits under the boxes
+// in the map's corners or the zoom buttons, or off the screen, is not drawn (rounds 5 and 6: a name peeked out beside them).
 function declutterPins() {
   flipPins();
   const covered = coveredAreas();
@@ -719,9 +799,9 @@ function declutterPins() {
   hideCoveredGuNames(placed.map((pin) => pin.box));
 }
 
-// The screen boxes over the map: the left column's cards and the docked panel
+// The screen boxes over the map: what sits in its corners and the zoom buttons (the panel sits beside the map)
 function coveredAreas() {
-  return [...document.querySelectorAll(".left-column > *, #panel")]
+  return [...document.querySelectorAll(".map-corner > *, .zoom-controls")]
     .map((element) => element.getBoundingClientRect()).filter((box) => box.width > 0 && box.height > 0);
 }
 
@@ -845,7 +925,7 @@ function handleClick(event) {
     if (dong !== state.selected) clearSelection();
     return;
   }
-  if (dong) selectDong(dong, { zoom: false });
+  if (dong) selectDong(dong);   // a click fits the area too (spec 5.4)
 }
 
 // ---------------------------------------------------------------------------
@@ -968,10 +1048,10 @@ function renderDotControls() {
   const active = state.dots.active;
   showPins();
   document.getElementById("zoom-hint").hidden = state.dots.streetLevel;
-  const filters = document.getElementById("dot-filters");
+  const filters = document.getElementById("dot-filters");   // in the map view menu
   filters.hidden = !state.dots.streetLevel;
   if (filters.hidden) {
-    noteFiltersHeight(filters);
+    placeMapHeadline();   // the zoom hint came back: the headline's room changed
     return;
   }
   let groupChips = "";
@@ -986,43 +1066,18 @@ function renderDotControls() {
   }
   filters.innerHTML = `${groupChips}${extraKindsHtml()}`;
   for (const chip of filters.querySelectorAll(".chip[data-group]")) {
-    chip.addEventListener("click", () => {
+    chip.addEventListener("click", () => {   // toggles without closing the menu
       const groups = new Set(state.dots.visibleGroups);
       const index = Number(chip.dataset.group);
       if (groups.has(index)) groups.delete(index); else groups.add(index);
       state.dots.setVisibleGroups(groups);
       renderDotControls();
+      filters.querySelector(`.chip[data-group="${index}"]`)?.focus();   // the redraw dropped the focused chip
       if (state.card) openCard(state.dots.buildingByPosition(state.card));
     });
   }
   bindExtraKinds(filters);
-  noteFiltersHeight(filters);
-}
-
-// Phones stack the map view card above the shop controls, whose height changes with what they hold
-// Phones fit the map view card between the top card and the shop controls (style.css): note where the top card ends
-function watchTopCard() {
-  const app = document.querySelector(".app"), topCard = document.getElementById("top-card");
-  const headline = document.getElementById("map-headline");
-  const note = () => {
-    const bottom = topCard.getBoundingClientRect().bottom;
-    app.style.setProperty("--top-card-bottom", `${bottom}px`);
-    // phones: the map view card also stops under the map headline, which sits under the top card (D95)
-    const below = headline.hidden ? 0 : headline.getBoundingClientRect().bottom;
-    app.style.setProperty("--map-top-bottom", `${Math.max(bottom, below)}px`);
-  };
-  const watch = new ResizeObserver(note);
-  watch.observe(topCard);
-  watch.observe(headline);
-  // desktop: the map headline sits between the left column and the panel, which both change width (folds, the handle)
-  const room = new ResizeObserver(placeMapHeadline);
-  for (const id of ["top-card", "left-fold", "panel"]) room.observe(document.getElementById(id));
-}
-
-function noteFiltersHeight(filters) {
-  const app = document.querySelector(".app");
-  if (filters.hidden) app.style.removeProperty("--dot-filters-height");
-  else app.style.setProperty("--dot-filters-height", `${filters.offsetHeight}px`);
+  placeMapHeadline();   // the zoom hint went: the headline's room changed
 }
 
 // "같이 볼 가게": the picked kinds as chips (tap to remove) and a search box for up to 3
@@ -1099,11 +1154,10 @@ function chooseExtraKinds(kinds) {
 // ---------------------------------------------------------------------------
 // The key view comes with the choice: the trade's gaps, or (no trade) gaps and suggestions for all trades
 function chooseTrade(trade, render = true) {
-  state.customers = null;                         // any trade (or "바꾸기") leaves the customer map
+  state.customers = null;                         // any trade (or "전체 업종") leaves the customer map
   showPanel();
   if (state.sim) endSimulation(false);
   state.trade = trade;
-  state.browsing = false;
   state.layer = trade ? "tradeGap" : "none";      // clearing the trade goes back to the plain map (D80)
   stopPlaying();
   if (state.wishlist && !trade) state.wishlist = state.wishlist.filter((key) => !CRITERIA.find((c) => c.key === key).needsTrade);
@@ -1115,20 +1169,19 @@ function chooseTrade(trade, render = true) {
   drawPins();
   closeCard();
   if (render) {
-    state.selected = null;
-    showOutline("dong-selected", null);
-    renderAll();
-    fitSeoul();
+    renderAll();                                  // an open area stays open under the new trade (D121)
+    if (!isFocused()) fitSeoul();
   }
   writeLink();
 }
 
-function selectDong(dong, { zoom }) {
-  showPanel();                                    // first: fitBounds below measures the panel
+// fit: false keeps the camera where it is (an address search has already flown to the building)
+function selectDong(dong, { fit = true } = {}) {
+  showPanel();                                    // first: the hold's fit measures the map's box beside the panel
   state.selected = dong;
+  state.fitOnOpen = fit;
   showOutline("dong-selected", dong);
-  renderSheet();
-  if (zoom) fitBounds(state.bboxes.get(dong.code), { maxZoom: CLOSEST_FIT_ZOOM });
+  renderSheet();                                  // its syncFocus fits and holds the area (holdArea)
   writeLink();
 }
 
@@ -1169,7 +1222,7 @@ function togglePlay() {
 }
 
 // ---------------------------------------------------------------------------
-// Rendering: top card, sheet, map controls
+// Rendering: top bar, sheet, map controls
 // ---------------------------------------------------------------------------
 function renderAll() {
   document.getElementById("language").textContent = getLanguage() === "ko" ? "EN" : "한국어";
@@ -1185,9 +1238,9 @@ function renderAll() {
   document.querySelector(".brand").textContent = t("appName");
   document.getElementById("map").setAttribute("aria-label", t("mapLabel"));
   labelSheetHandle();
-  document.getElementById("tagline").textContent = t("appTagline");
+  document.getElementById("customers-open").textContent = t("notOnList");
   renderPanelLabels();
-  renderTradeStep();
+  renderTradeMenu();
   renderSheet();
   restyleAll();
   renderLayerControl();
@@ -1195,37 +1248,39 @@ function renderAll() {
   renderCompareButton();
 }
 
-function renderTradeStep() {
-  const box = document.getElementById("trade-step");
+// The top bar's trade menu (top bar design 5.2): the button names the chosen trade, or asks for one on a lime fill
+// (not while the customer map is on, which its own button marks); the menu lists 전체 업종 and every trade by group
+function renderTradeMenu() {
+  const button = document.getElementById("trade-menu-button");
+  const list = document.getElementById("trade-menu-list");
+  button.classList.toggle("chosen", Boolean(state.trade));
+  button.classList.toggle("empty", !state.trade && !state.customers);
+  button.innerHTML = state.trade
+    ? `${tradeIcon(state.trade)}<span class="trade-name">${escapeHtml(tradeName(state.trade))}</span>${CHEVRON_ICON}`
+    : `<span>${t("pickTrade")}</span>${CHEVRON_ICON}`;
+  const current = state.customers ? null : state.trade;   // "" (전체 업종) when there is no trade and no customer map
+  const item = (trade, label) => `<button type="button" role="menuitemradio" class="menu-item trade-item${trade === current ? " on" : ""}"
+      data-trade="${escapeHtml(trade)}" aria-checked="${trade === current}">${label}</button>`;
   const trades = Object.keys(state.meta.trade_subtypes);   // founder_trades.csv order: most common trades first
-  if (state.trade) {
-    box.innerHTML = `<div class="chosen">
-        <p class="chosen-trade">${tradeIcon(state.trade)}${escapeHtml(tradeName(state.trade))}</p>
-        <button type="button" class="text-button" id="change-trade">${t("change")}</button></div>`;
-    box.querySelector("#change-trade").addEventListener("click", () => chooseTrade(""));
-    return;
+  const groups = TRADE_GROUPS.map((key) => {
+    const title = t("menuGroups")[key];
+    const items = trades.filter((trade) => state.meta.trade_groups[trade] === key)
+      .map((trade) => item(trade, `${tradeIcon(trade)}${escapeHtml(tradeName(trade))}`));
+    return `<div class="trade-group" role="group" aria-label="${escapeHtml(title)}">
+      <p class="menu-group-title">${escapeHtml(title)}</p>${items.join("")}</div>`;
+  });
+  list.innerHTML = `${item("", t("allTrades"))}<div class="trade-groups">${groups.join("")}</div>`;
+  for (const choice of list.querySelectorAll("[data-trade]")) {
+    choice.addEventListener("click", () => {
+      closeMenu(list);
+      if (choice.dataset.trade === (state.customers ? null : state.trade)) return;   // the marked one again: nothing changes
+      chooseTrade(choice.dataset.trade);
+    });
   }
-  if (state.customers) {
-    box.innerHTML = `<div class="chosen">
-        <div><p class="chosen-trade">${t("customersTitle")}</p><p class="chosen-sub">${t("ownConcept")}</p></div>
-        <button type="button" class="text-button" id="change-trade">${t("change")}</button></div>`;
-    box.querySelector("#change-trade").addEventListener("click", () => chooseTrade(""));
-    return;
-  }
-  if (state.browsing) {
-    box.innerHTML = `<div class="chosen"><p class="chosen-sub">${t("browsing")}</p>
-        <button type="button" class="text-button" id="pick-trade">${t("pickTrade")}</button></div>`;
-    box.querySelector("#pick-trade").addEventListener("click", () => { state.browsing = false; renderTradeStep(); });
-    return;
-  }
-  const chips = trades.map((trade) => `<button type="button" class="trade-chip" data-trade="${escapeHtml(trade)}">${tradeIcon(trade)}${escapeHtml(tradeName(trade))}</button>`);
-  box.innerHTML = `<p class="question">${t("question")}</p><p class="question-hint">${t("questionHint")}</p>
-    <div class="trade-grid">${chips.join("")}</div>
-    <button type="button" class="text-button browse" id="just-browse">${t("justBrowse")}</button>
-    <button type="button" class="text-button browse" id="own-concept">${t("ownConcept")}</button>`;
-  for (const chip of box.querySelectorAll(".trade-chip")) chip.addEventListener("click", () => chooseTrade(chip.dataset.trade));
-  box.querySelector("#just-browse").addEventListener("click", () => { state.browsing = true; renderTradeStep(); });
-  box.querySelector("#own-concept").addEventListener("click", () => openCustomers());
+  button.disabled = false;   // the menu works from its first drawing, once the map is ready
+  const customers = document.getElementById("customers-open");
+  customers.classList.toggle("on", Boolean(state.customers));
+  customers.setAttribute("aria-pressed", String(Boolean(state.customers)));
 }
 
 // keepScroll: a choice in a form redraws the panel without jumping back to its top, and keeps the focus on its button
@@ -1482,7 +1537,7 @@ const tour = { step: 0, saved: null };   // saved: the screen before the tour, w
 function viewSnapshot() {
   const customers = state.customers;
   return {
-    trade: state.trade, browsing: state.browsing, layer: state.layer, selected: state.selected,
+    trade: state.trade, layer: state.layer, selected: state.selected,
     customers: customers && { ...customers, who: [...customers.who], when: [...customers.when], narrow: [...customers.narrow] },
     wishlist: state.wishlist && [...state.wishlist], extraKinds: [...state.extraKinds],
     camera: { center: state.map.getCenter(), zoom: state.map.getZoom() },
@@ -1499,7 +1554,6 @@ async function restoreView(saved) {
   }
   state.extraKinds = [...saved.extraKinds];
   state.dots.setExtraKinds(state.extraKinds);
-  state.browsing = saved.browsing;
   state.layer = saved.layer;
   state.wishlist = saved.wishlist;
   state.wishMatches = new Set();
@@ -1599,7 +1653,7 @@ function showTourExample({ street = false } = {}) {
   renderAll();
   // an offset, as the zoom-to-shops button does: a padding here would stay and stop the next fits from moving the map
   if (street) state.map.easeTo({ center: TOUR_SHOPS_CENTER, zoom: TOUR_STREET_ZOOM, offset: freeAreaOffset(), duration: 0 });
-  else fitBounds(state.bboxes.get(dong.code), { maxZoom: CLOSEST_FIT_ZOOM, animate: false });
+  else holdArea(dong, { animate: false });   // renderAll has started the hold already; this one lands at once
   // 열어보기 in the middle of the sheet: at its bottom edge, a phone's window would cut off the ring
   if (street) document.getElementById("simulate-dong")?.scrollIntoView({ block: "center" });
   else evidenceBox()?.scrollIntoView({ block: "nearest" });
@@ -1617,22 +1671,22 @@ function evidenceBox() {
 // What each step points at, measured again on every frame by tour.js
 function tourTargets(step) {
   const rectOf = (element) => element?.getBoundingClientRect();
-  if (step === 2) return [rectOf(document.getElementById("trade-step"))];
-  if (step === 3) return [rectOf(document.getElementById("map-headline")), rectOf(document.getElementById("trade-step"))];
+  if (step === 2) return [rectOf(document.getElementById("trade-menu-button"))];
+  if (step === 3) return [rectOf(document.getElementById("map-headline")), rectOf(document.getElementById("trade-menu-button"))];
   if (step === 4) {
     // the docked panel ends at the window's edge: when a resize pushes the box past it, bring it back so its ring shows
     const box = evidenceBox(), rect = rectOf(box);
     if (rect && (rect.bottom > window.innerHeight || rect.top < 0)) box.scrollIntoView({ block: "nearest" });
     return [rectOf(box)];
   }
-  const picker = rectOf(document.querySelector("#dot-filters .extra-kinds"));
+  const mapView = rectOf(document.getElementById("layer-toggle"));   // "같이 볼 가게" lives in its menu
   const simulate = rectOf(document.getElementById("simulate-dong"));
   // a phone has no free map between the cards for a third hole: the shop names show around the card
-  if (window.innerWidth <= NARROW_WIDTH) return [picker, simulate];
+  if (window.innerWidth <= NARROW_WIDTH) return [mapView, simulate];
   const point = state.map.project(TOUR_SHOPS_CENTER);
   const map = state.map.getContainer().getBoundingClientRect();
   const [width, height] = TOUR_MAP_BOX;
-  return [new DOMRect(map.left + point.x - width / 2, map.top + point.y - height / 2, width, height), picker, simulate];
+  return [new DOMRect(map.left + point.x - width / 2, map.top + point.y - height / 2, width, height), mapView, simulate];
 }
 
 function tourCopy(step) {
@@ -1648,7 +1702,6 @@ function tourCopy(step) {
 // The welcome's start button: remember the screen once (going back to the welcome and on keeps the first one)
 function beginTour() {
   tour.saved ??= viewSnapshot();
-  showLeftColumn();   // the tour points at the trade chips and the map view
   document.getElementById("help-dialog").close();
   goToTourStep(2);
 }
@@ -1926,21 +1979,33 @@ function tradeVerdict(dong) {
 // ---------------------------------------------------------------------------
 const grownCards = { report: "", keys: new Set() };   // kept while the same trade and area stay open
 const CARD_ORDER = {
-  day: ["shops", "sales", "closures", "time", "buyers", "people", "rent"],
-  night: ["shops", "time", "people", "sales", "closures", "buyers", "rent"],   // D115: the evening first
+  day: ["shops", "sales", "closures", "time", "buyers", "people", "rent", "spending"],
+  night: ["shops", "time", "people", "sales", "closures", "buyers", "rent", "spending"],   // D115: the evening first
 };
+// The spending card (D120): the ten kinds in dongs.json, the kind a trade sells into, and when a kind is worth a sentence
+const SPENDING_KINDS = ["groceries", "clothing", "household", "medical", "transport", "education", "nightlife", "leisure", "other", "eating_out"];
+const TRADE_SPENDING = {
+  카페: "eating_out", 제과점: "eating_out", 한식음식점: "eating_out", 분식: "eating_out", 치킨: "eating_out", "호프·주점": "eating_out",
+  교습학원: "education",
+};
+const SPENDING_ONE_KIND = 80;     // one kind takes this share or more of the area's money
+const SPENDING_STANDS_OUT = 10;   // a kind this many points above Seoul's ordinary area
+
+// A card grown in one report opens small in the next: another trade or another area
+function resetGrownCards(report) {
+  if (grownCards.report === report) return;
+  grownCards.report = report;
+  grownCards.keys.clear();
+}
 
 function tradeCards(dong) {
-  const report = `${state.trade}|${dong.code}`;
-  if (grownCards.report !== report) {
-    grownCards.report = report;
-    grownCards.keys.clear();
-  }
+  resetGrownCards(`${state.trade}|${dong.code}`);
   const values = dong.trades[state.trade] ?? {}, name = escapeHtml(tradeName(state.trade));
   const night = state.nightTrades.has(state.trade);
   const cards = {
     shops: shopsCard(values, name), sales: salesCard(values, name), closures: closuresCard(dong, values, name),
     time: timeCard(values, name, night), buyers: buyersCard(values, name), people: peopleCard(dong, night), rent: rentCard(dong),
+    spending: spendingCard(dong, state.trade),
   };
   return CARD_ORDER[night ? "night" : "day"].map((key) => cards[key]);
 }
@@ -2097,6 +2162,42 @@ function rentCard(dong) {
       { name: t("pairUsualSeoul"), value: state.middleRent, text: formatWon(month(state.middleRent)) }) : "",
     more: `<p>${where}</p>`,
     compare: joinCompare(t("rentNumber", rent), vsUsual(rent, state.middleRent)), chip: tileChip(rent, near, true),
+  });
+}
+
+// Where the area's money goes (D120): out of every 100원 spent here, how much each kind takes, against Seoul's
+// ordinary area. The highlighted kind is the one the trade sells into, else the one the sentence names.
+function spendingFinding(spending, usual) {
+  const byShare = [...SPENDING_KINDS].sort((a, b) => spending[b] - spending[a]);
+  if (spending[byShare[0]] >= SPENDING_ONE_KIND) return { rule: "oneKind", kind: byShare[0] };
+  const lift = (kind) => spending[kind] - usual[kind];
+  const standout = [...SPENDING_KINDS].sort((a, b) => lift(b) - lift(a))[0];
+  if (lift(standout) >= SPENDING_STANDS_OUT) return { rule: "standsOut", kind: standout };
+  return { rule: "likeUsual", kind: byShare[0] };
+}
+
+function spendingCard(dong, trade) {
+  const spending = dong.spending, usual = state.spendingUsual, kinds = t("spendingKinds"), won = (share) => t("wonOf100", share);
+  const finding = spendingFinding(spending, usual), name = (kind) => kinds[kind];
+  const sentence = {
+    oneKind: () => t("knSpendingOneKind", name(finding.kind), won(spending[finding.kind])),
+    standsOut: () => t("knSpendingStandsOut", name(finding.kind), won(spending[finding.kind]), won(usual[finding.kind])),
+    likeUsual: () => t("knSpendingLikeUsual", name(finding.kind), won(spending[finding.kind])),
+  }[finding.rule]();
+  const highlight = TRADE_SPENDING[trade] ?? finding.kind;
+  const byShare = [...SPENDING_KINDS].sort((a, b) => spending[b] - spending[a]);
+  const shown = new Set([...byShare.slice(0, 4), highlight, finding.kind]);
+  const bars = byShare.filter((kind) => shown.has(kind)).map((kind) => `<div class="spend-row${kind === highlight ? " on" : ""}">`
+    + `<span class="spend-name">${escapeHtml(name(kind))}</span><span class="spend-track">`
+    + `<i class="spend-fill" style="width:${spending[kind].toFixed(1)}%"></i>`
+    + `<i class="spend-usual" style="left:${usual[kind].toFixed(1)}%"></i></span></div>`);
+  const rows = byShare.map((kind) => `<tr><td>${escapeHtml(name(kind))}</td><td>${spending[kind].toFixed(1)}%</td>`
+    + `<td>${t("knSpendingCell", usual[kind].toFixed(1))}</td></tr>`);
+  return card({
+    key: "spending", label: t("knSpending"), sentence,
+    graph: `<div class="spend-bars">${bars.join("")}</div>`,
+    more: `<table class="figures">${rows.join("")}</table><p>${t("knSpendingNote")}</p>`,
+    compare: t("knSpendingCompare", name(highlight), won(spending[highlight]), won(usual[highlight])),
   });
 }
 
@@ -2329,22 +2430,41 @@ function pinKeyHtml() {
     + `<p class="legend-extra"><b class="pin-star" aria-hidden="true">★</b> ${t("strongBadge")}</p>`;
 }
 
+// The map view menu in the top bar, and the map's bottom-left boxes: the time strip for an hourly view, the shop key
 function renderLayerControl() {
-  const box = document.getElementById("layer-control");
-  if (isFocused()) {   // D112: no colour on the map while an area is open, so no map views; the shop key stays
-    box.classList.remove("open");
-    box.innerHTML = shopLegendHtml();
-    box.style.display = box.innerHTML ? "" : "none";
-    renderMapHeadline();
-    return;
-  }
-  box.style.display = "";
+  const focused = isFocused();   // D112: no colour on the map while an area is open, so no map views; the shop key stays
   const layer = LAYERS[state.layer];
+  document.getElementById("layer-toggle").innerHTML =
+    `<span class="layer-icon" aria-hidden="true">${LAYERS_ICON}</span><span>${t("layerButton")}</span>${CHEVRON_ICON}`;
   const available = ([, l]) => (state.customers ? l.customersOnly
     : !l.customersOnly && (!l.needsTrade || state.trade) && (!l.withoutTrade || !state.trade));
-  const options = Object.entries(LAYERS).filter(available).map(([key, l]) =>
+  const options = focused ? [] : Object.entries(LAYERS).filter(available).map(([key, l]) =>
     `<button type="button" role="menuitemradio" aria-checked="${key === state.layer}" class="menu-item${key === state.layer ? " on" : ""}" data-layer="${key}">${escapeHtml(l.label())}</button>`);
-  const time = layer.timed ? `
+  const menu = document.getElementById("layer-options");
+  menu.innerHTML = options.join("");
+  for (const item of menu.querySelectorAll(".menu-item")) {
+    item.addEventListener("click", () => {
+      closeMenu(document.getElementById("layer-menu"));
+      setLayer(item.dataset.layer);
+    });
+  }
+  // an area fitted below zoom 14 has no shop controls yet: the menu says to zoom in, as the zoom hint does
+  const zoomNote = document.getElementById("layer-zoom-note");
+  zoomNote.hidden = !(focused && !state.dots.streetLevel);
+  zoomNote.textContent = t("zoomHint");
+  renderTimeStrip(layer.timed && !focused);
+  const shopKey = document.getElementById("shop-key");
+  shopKey.innerHTML = shopLegendHtml();
+  shopKey.hidden = !shopKey.innerHTML;
+  renderMapHeadline();
+}
+
+// The hours of an hourly view (weekday or weekend, the hour, play), in a strip at the map's bottom left
+function renderTimeStrip(shown) {
+  const strip = document.getElementById("time-strip");
+  strip.hidden = !shown;
+  if (!shown) return;
+  strip.innerHTML = `
     <div class="time-control">
       <div class="segmented" role="group">
         <button type="button" data-day="weekday" class="${state.dayType === "weekday" ? "on" : ""}">${t("weekday")}</button>
@@ -2355,29 +2475,17 @@ function renderLayerControl() {
         <input type="range" min="0" max="23" step="1" value="${state.hour}" id="hour" aria-label="${t("layerCrowd")}">
         <span class="hour-label">${t("hourLabel", state.hour)}</span>
       </div>
-    </div>` : "";
-  box.innerHTML = `
-    <button type="button" class="layer-button" id="layer-toggle" aria-haspopup="menu" aria-expanded="${box.classList.contains("open")}">
-      <span class="layer-icon" aria-hidden="true">${LAYERS_ICON}</span><span>${t("layerButton")}: <b>${escapeHtml(state.wishlist ? t("wishlistLegend") : layer.label())}</b></span><span class="layer-chevron" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg></span></button>
-    <div class="layer-menu" role="menu">${options.join("")}</div>${time}${shopLegendHtml()}`;
-  box.querySelector("#layer-toggle").addEventListener("click", () => {
-    box.classList.toggle("open");
-    box.querySelector("#layer-toggle").setAttribute("aria-expanded", box.classList.contains("open"));
-  });
-  for (const item of box.querySelectorAll(".menu-item")) {
-    item.addEventListener("click", () => { box.classList.remove("open"); setLayer(item.dataset.layer); });
-  }
-  for (const button of box.querySelectorAll("[data-day]")) {
+    </div>`;
+  for (const button of strip.querySelectorAll("[data-day]")) {
     button.addEventListener("click", () => { state.dayType = button.dataset.day; restyleAll(); renderLayerControl(); if (state.selected) renderSheet({ keepScroll: true }); });
   }
-  box.querySelector("#hour")?.addEventListener("input", (event) => {
+  strip.querySelector("#hour").addEventListener("input", (event) => {
     state.hour = Number(event.target.value);
     restyleAll();
-    box.querySelector(".hour-label").textContent = t("hourLabel", state.hour);
+    strip.querySelector(".hour-label").textContent = t("hourLabel", state.hour);
     renderMapHeadline();
   });
-  box.querySelector("#play")?.addEventListener("click", togglePlay);
-  renderMapHeadline();
+  strip.querySelector("#play").addEventListener("click", togglePlay);
 }
 
 // ---------------------------------------------------------------------------
@@ -2496,31 +2604,24 @@ function tenthsText(value, values, lowerIsBetter, key) {
   return better >= worse ? t("mhTenths", better, t("mhBetter")[key]) : t("mhTenths", worse, t("mhWorse")[key]);
 }
 
-// Desktop: over the map's free area, between the left column and the panel, never over either; with too little
-// room there, docked under the search card and folded like on phones. Phones: style.css.
+// Desktop: centred at the top of the map's box, right of the top-left corner's pills and left of the panel's fold
+// button, never over them; with too little room there, folded short like on phones (D103). Phones: style.css.
 function placeMapHeadline() {
   const box = document.getElementById("map-headline");
-  const dock = (docked) => {
-    box.classList.toggle("docked", docked);
-    const topCard = document.getElementById("top-card"), column = document.querySelector(".left-column");
-    if (docked && box.previousElementSibling !== topCard) topCard.after(box);
-    if (!docked && box.nextElementSibling !== column) column.before(box);   // its place in index.html
-  };
   if (window.innerWidth <= NARROW_WIDTH) {
-    dock(false);
+    box.classList.remove("short");
     box.style.left = box.style.right = "";
     return;
   }
-  const edge = (id, side) => {
-    const rect = document.getElementById(id).getBoundingClientRect();
-    return rect.width ? rect[side] : null;
-  };
-  const left = Math.max(...["top-card", "left-fold"].map((id) => edge(id, "right") ?? 0)) + 12;
-  const right = Math.min(...["panel", "panel-fold"].map((id) => edge(id, "left") ?? window.innerWidth)) - 12;
-  const docked = right - left < MIN_HEADLINE_WIDTH;
-  dock(docked);
-  box.style.left = docked ? "" : `${left}px`;
-  box.style.right = docked ? "" : `${window.innerWidth - right}px`;
+  const map = state.map.getContainer().getBoundingClientRect();
+  const cornerEdges = [...document.querySelectorAll(".map-corner.top-left > *")]
+    .map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0).map((rect) => rect.right + 12);
+  const left = Math.max(map.left + 12, ...cornerEdges);
+  const fold = document.getElementById("panel-fold").getBoundingClientRect();   // it sits over the map's top right
+  const right = Math.min(map.right, fold.width ? fold.left : map.right) - 12;
+  box.classList.toggle("short", right - left < MIN_HEADLINE_WIDTH);
+  box.style.left = `${left}px`;
+  box.style.right = `${window.innerWidth - right}px`;
 }
 
 function openReadingGuide() {
@@ -2611,19 +2712,25 @@ function bindControls() {
   helpDialog.addEventListener("close", () => { if (helpDialog.dataset.kind === "welcome") markWelcomed(); });  // any way out of it
   document.getElementById("zoom-in").addEventListener("click", () => state.map.zoomIn());
   document.getElementById("zoom-out").addEventListener("click", () => state.map.zoomOut());
-  document.getElementById("seoul-all").addEventListener("click", () => fitSeoul());
+  document.getElementById("seoul-all").addEventListener("click", () => {
+    if (isFocused()) clearSelection();
+    fitSeoul();
+  });
   document.getElementById("compare-open").addEventListener("click", () => {
     renderCompare();
     document.getElementById("compare-dialog").showModal();
   });
   document.getElementById("compare-close").addEventListener("click", () => document.getElementById("compare-dialog").close());
   bindSheetHandle();
+  // Esc: an open bar menu closes first, on its own; the dialogs (help, compare, the tour) keep their own Esc
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      closeCard();
-      document.getElementById("layer-control").classList.remove("open");
-    }
+    if (event.key !== "Escape") return;
+    if (!document.querySelector("dialog[open]") && closeOpenMenu()) return;
+    closeCard();
   });
+  bindMenu(document.getElementById("trade-menu-button"), document.getElementById("trade-menu-list"));
+  bindMenu(document.getElementById("layer-toggle"), document.getElementById("layer-menu"));
+  document.getElementById("customers-open").addEventListener("click", () => { if (!state.customers) openCustomers(); });
   bindSearch();
 }
 
@@ -2634,7 +2741,7 @@ function bindSheet() {
   for (const card of document.querySelectorAll(".place-card, .example-open")) {
     card.addEventListener("click", () => {
       if (card.dataset.leadTrade) openLead(card.dataset.leadTrade, dongOf(card.dataset.code));
-      else selectDong(dongOf(card.dataset.code), { zoom: true });
+      else selectDong(dongOf(card.dataset.code));
     });
   }
   for (const bar of document.querySelectorAll(".trade-bar")) bar.addEventListener("click", () => chooseTrade(bar.dataset.trade));
@@ -2658,7 +2765,7 @@ function bindSheet() {
     }
   }
   for (const bar of document.querySelectorAll("#sheet-body .customer-bar")) {
-    bar.addEventListener("click", () => selectDong(dongOf(bar.dataset.code), { zoom: true }));
+    bar.addEventListener("click", () => selectDong(dongOf(bar.dataset.code)));
   }
   document.getElementById("idea-name")?.addEventListener("input", (event) => { state.customers.name = event.target.value; });
   if (document.getElementById("similar-search")) bindExtraKinds(document.getElementById("sheet-body"), "similar");
@@ -2687,7 +2794,7 @@ function bindSheet() {
 function openLead(trade, dong) {
   chooseTrade(trade, false);
   renderAll();
-  selectDong(dong, { zoom: true });
+  selectDong(dong);
 }
 
 // ---------------------------------------------------------------------------
@@ -2939,8 +3046,9 @@ function customerBars(rows, typical) {
   return `<div class="customer-bars" role="group" aria-label="${escapeHtml(t("customersAria"))}">${bars.join("")}</div>`;
 }
 
-// An area's report inside the customer map: my customers at my times, similar shops, then closures and rent
+// An area's report inside the customer map: my customers at my times, similar shops, then closures, rent and spending
 function customerDongView(dong) {
+  resetGrownCards(`customers|${dong.code}`);
   const headline = t("customerHeadline", placeName(dong), state.customers.name.trim());
   return `
     <div class="sheet-header">
@@ -2951,7 +3059,7 @@ function customerDongView(dong) {
     ${referenceNote()}
     ${customerSection(dong)}
     ${similarSection(dong)}
-    <section class="key-numbers"><div class="kn-grid">${[closeAllKeyNumber(dong), rentKeyNumber(dong)].join("")}</div></section>
+    <section class="key-numbers"><div class="kn-grid">${[closeAllKeyNumber(dong), rentKeyNumber(dong), spendingCard(dong, null)].join("")}</div></section>
     <div class="actions"><button type="button" class="secondary-button" id="zoom-stores">${t("zoomToStores")}</button></div>`;
 }
 
@@ -3368,8 +3476,9 @@ function bindSearch() {
     list.hidden = true;
     input.blur();
     if (state.sim) endSimulation(false);
+    if (state.hold) liftHold();   // a search moves the camera past the held area's limits
     showPanel();   // first, so an address's flight already leaves room for the panel (it unfolds after the flight otherwise)
-    if (result.dong) selectDong(result.dong, { zoom: true });
+    if (result.dong) selectDong(result.dong);
     else goToAddress(result.address);
   };
   const render = (dongs, addresses, loading) => {
@@ -3428,17 +3537,22 @@ function bindSearch() {
 // Fly to a searched building, then open its card and the neighborhood it belongs to
 function goToAddress(address) {
   closeCard();
-  state.map.flyTo({ center: [address.lng, address.lat], zoom: ADDRESS_ZOOM, offset: freeAreaOffset(), duration: 1200 });
+  state.map.stop();   // a fit still easing must not fire the listener below early
+  // listen before flying: under reduced motion the flight is a jump and its moveend fires at once
   state.map.once("moveend", async () => {
     await refreshDots();
     await state.dots.load(address.code);
     const building = state.dots.buildingByPosition({ code: address.code, lat: address.lat, lng: address.lng });
-    if (!building) return;
-    const dong = state.data.dongs.find((d) => d.code === building.unit);
-    if (dong && dong !== state.selected) selectDong(dong, { zoom: false });
+    const dong = building && state.data.dongs.find((d) => d.code === building.unit);
+    if (!dong) {
+      if (isFocused()) clearSelection();   // the search lifted the hold: with no area to hold, an open one is left (D112)
+      return;
+    }
+    selectDong(dong, { fit: false });   // the search lifted the hold: the area is held again, in place, under a fresh panel
     const show = () => openCard(building);
     if (state.map.areTilesLoaded()) show(); else state.map.once("idle", show);
   });
+  state.map.flyTo({ center: [address.lng, address.lat], zoom: ADDRESS_ZOOM, offset: freeAreaOffset(), duration: 1200 });
 }
 
 // ---------------------------------------------------------------------------
